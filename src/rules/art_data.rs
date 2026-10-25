@@ -982,13 +982,20 @@ pub struct ArtRegistry {
     damage_fire_offsets_valid: bool,
 }
 
+/// The loader (`0x00427B50`) and the explicit ART `End=`/`LoopEnd=` reads
+/// store the value without clamping it to the SHP, and Mental Omega 3.3.6
+/// ships bounds past the last frame (e.g. `CADEFN_A` LoopEnd=5 for 4 frames)
+/// that gamemd plays. Bind them: the atlas holds only real frames, so a cycle
+/// step past the last one draws nothing. Residual: CC_Draw_Shape (0x004AED70)
+/// for a frame index at or beyond the header count is unconfirmed; only
+/// values below the -1 sentinel are refused.
 fn validate_loaded_bound(
     name: &str,
     field: &'static str,
     value: i32,
     raw_count: i32,
 ) -> Result<(), AnimAssetBindError> {
-    if value < -1 || value > raw_count {
+    if value < -1 {
         return Err(AnimAssetBindError::InvalidLoadedBound {
             name: name.to_string(),
             field,
@@ -3030,12 +3037,16 @@ mod anim_runtime_metadata_tests {
     }
 
     #[test]
-    fn loaded_bounds_allow_native_sentinels_but_reject_out_of_range_values() {
+    fn loaded_bounds_allow_native_sentinels_and_bounds_past_the_last_frame() {
         assert!(validate_loaded_bound("FIRE", "End", -1, 30).is_ok());
         assert!(validate_loaded_bound("FIRE", "End", 0, 30).is_ok());
         assert!(validate_loaded_bound("FIRE", "End", 30, 30).is_ok());
         assert!(validate_loaded_bound("FIRE", "End", -2, 30).is_err());
-        assert!(validate_loaded_bound("FIRE", "End", 31, 30).is_err());
+        // Mental Omega's CADEFN_A: LoopEnd=5 over a 4-frame SHP.
+        assert_eq!(
+            resolve_loaded_bounds("CADEFN_A", 4, false, None, Some(5)).unwrap(),
+            (4, 5),
+        );
     }
 
     #[test]
