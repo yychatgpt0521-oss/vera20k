@@ -104,7 +104,9 @@ impl IniRoots {
     pub fn mapsel(&self) -> &'static str {
         self.spawner_name("MAPSELMD.INI", "MAPSELMO.INI")
     }
-    fn spawner_name(&self, yr: &'static str, mo: &'static str) -> &'static str {
+    /// The MD name, or the MO spawner's renamed one under the MO profile.
+    /// Theater INIs (`map::theater`) follow the same retargeting.
+    pub fn spawner_name(&self, yr: &'static str, mo: &'static str) -> &'static str {
         if self.profile == IniProfile::Mo {
             mo
         } else {
