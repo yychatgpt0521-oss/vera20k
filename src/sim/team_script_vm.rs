@@ -474,8 +474,15 @@ impl TeamAiInstallDiagnostic {
         }
     }
 
+    /// A fixed-AIMD resolution loss refuses the install, except an AITrigger
+    /// naming an absent TeamType: Mental Omega 3.3.6's AIMO ships one
+    /// (`FOETR176LB-G` -> `FOETT176LB-G`) and gamemd still loads it. The
+    /// trigger keeps no team, so `AITriggerTypeClass::Is_Eligible` (0x0041E720)
+    /// never admits it. Residual: whether native Read_INI (0x0041F580) finds
+    /// or allocates the name is unconfirmed; both leave it unused here.
     pub(crate) fn is_fixed_source_refusal(&self) -> bool {
         self.source() == TeamAiDefinitionSource::FixedAimd
+            && !matches!(self, Self::MissingAiTriggerTeamType { .. })
     }
 }
 
