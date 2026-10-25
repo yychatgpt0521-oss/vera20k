@@ -65,6 +65,16 @@ pub fn open_manager(ra2_dir: &Path, all_mixes: bool) -> Result<AssetManager, Str
     open_family_manager(ra2_dir, all_mixes, ArchiveFamily::Yr)
 }
 
+/// Archive verbs given an explicit `--ini-profile` mount that profile's
+/// archive family, so an MO install opens without its YR MD media.
+pub fn open_profile_manager(
+    ra2_dir: &Path,
+    all_mixes: bool,
+    profile: crate::util::ini_roots::IniProfile,
+) -> Result<AssetManager, String> {
+    open_family_manager(ra2_dir, all_mixes, ArchiveFamily::for_ini_profile(profile))
+}
+
 fn open_family_manager(
     ra2_dir: &Path,
     all_mixes: bool,
@@ -89,7 +99,8 @@ fn open_family_manager(
     Ok(manager)
 }
 
-/// Only INI commands use host INI policy; ordinary archive tools stay retail.
+/// Only INI commands read host INI policy; archive tools stay retail unless
+/// given an explicit `--ini-profile`.
 /// An explicit CLI request replaces the entire config, never individual fields.
 pub fn open_ini_manager(
     root: &Path,
