@@ -301,6 +301,30 @@ pub(crate) fn install_world_presentation(
             rules.digital_display_types().types(),
         );
     }
+    // Ares Insignia SHPs, resolved once per match like the TypeExt pointers.
+    #[cfg(feature = "ares")]
+    if let Some(assets) = state.process_assets.manager()
+        && let Some(rules) = state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map(|runtime| &runtime.resources.rules)
+        && let Some(overlay) = state
+            .match_state
+            .match_presentation
+            .selection_overlay
+            .as_mut()
+    {
+        overlay.load_insignia_shapes(
+            &state.renderer.gpu.device,
+            &state.renderer.gpu.queue,
+            &state.renderer.batch_renderer,
+            assets,
+            rules
+                .all_objects()
+                .flat_map(|object| object.insignia_names()),
+        );
+    }
     // Phobos placement preview strips embed the active theater's palette and
     // the local house colour; a map load invalidates them.
     #[cfg(feature = "phobos")]

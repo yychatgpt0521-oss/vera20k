@@ -1004,6 +1004,15 @@ pub struct ObjectType {
     /// Add/Remove_Tracking owner; an explicit false is a distinct retained input.
     #[cfg(feature = "ares")]
     keep_alive: Option<bool>,
+    /// Ares TechnoTypeExt `Insignia` (Promotable<SHPStruct*>, Ext/TechnoType
+    /// Body.cpp `Insignia.%s`): `Insignia` sets every rank, then
+    /// `Insignia.Rookie/Veteran/Elite` override one. Each names `<value>.shp`;
+    /// the drawer falls back to stock PIPS when the file is missing.
+    #[cfg(feature = "ares")]
+    insignia: [Option<String>; 3],
+    /// Ares `Insignia.ShowEnemy`; unset uses `[General] EnemyInsignia`.
+    #[cfg(feature = "ares")]
+    insignia_show_enemy: Option<bool>,
     /// Immutable projection of the retained TechnoTypeExt+308/+314/+320/+321
     /// reader. Country identities bind during Process, never from merged INI.
     #[cfg(feature = "ares")]
@@ -2386,6 +2395,29 @@ impl ObjectType {
         }
     }
 
+    /// The Ares insignia SHP base name for `rank`, if the type names one.
+    #[cfg(feature = "ares")]
+    pub fn insignia(&self, rank: crate::sim::combat::veterancy::VeterancyRank) -> Option<&str> {
+        use crate::sim::combat::veterancy::VeterancyRank;
+        let index = match rank {
+            VeterancyRank::Rookie => 0,
+            VeterancyRank::Veteran => 1,
+            VeterancyRank::Elite => 2,
+        };
+        self.insignia[index].as_deref()
+    }
+
+    /// Every Ares insignia SHP base name this type names, for preloading.
+    #[cfg(feature = "ares")]
+    pub fn insignia_names(&self) -> impl Iterator<Item = &str> {
+        self.insignia.iter().flatten().map(String::as_str)
+    }
+
+    #[cfg(feature = "ares")]
+    pub const fn insignia_show_enemy(&self) -> Option<bool> {
+        self.insignia_show_enemy
+    }
+
     /// Optional Ares tracking override (reader1003F47C, constructor1003CF8E).
     pub const fn keep_alive(&self) -> Option<bool> {
         #[cfg(feature = "ares")]
@@ -3523,6 +3555,15 @@ impl ObjectType {
             #[cfg(feature = "ares")]
             keep_alive: section.read_ares_nullable_bool("KeepAlive", None),
             #[cfg(feature = "ares")]
+            insignia: {
+                let read = |key| section.read_name(key, 0x800).map(str::to_owned);
+                let all = read("Insignia");
+                ["Insignia.Rookie", "Insignia.Veteran", "Insignia.Elite"]
+                    .map(|key| read(key).or_else(|| all.clone()))
+            },
+            #[cfg(feature = "ares")]
+            insignia_show_enemy: section.read_ares_nullable_bool("Insignia.ShowEnemy", None),
+            #[cfg(feature = "ares")]
             factory_owners: Default::default(),
             #[cfg(feature = "ares")]
             explicit_factory: Default::default(),
@@ -4199,6 +4240,10 @@ mod infantry_pip_tests;
 #[cfg(test)]
 #[path = "ammo_pip_tests.rs"]
 mod ammo_pip_tests;
+
+#[cfg(all(test, feature = "ares"))]
+#[path = "ares_insignia_tests.rs"]
+mod ares_insignia_tests;
 
 #[cfg(test)]
 #[path = "absorber_pip_tests.rs"]

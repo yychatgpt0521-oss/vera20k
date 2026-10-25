@@ -2023,6 +2023,10 @@ pub struct GeneralRules {
     /// Launch case 11 hands `MapClass::RevealArea @ 0x005678E0`, which
     /// reveals nothing for 0 and clamps 11 and more to 10. Retail 15.
     pub psychic_reveal_radius: i32,
+    /// Ares RulesExt `[General] EnemyInsignia` (constructor true): whether
+    /// enemy objects draw rank insignia (Ext/Techno/Hooks.Insignia.cpp).
+    #[cfg(feature = "ares")]
+    pub enemy_insignia: bool,
     // --- GeneticConverter ([SpecialWeapons] + [General]) ---
     /// `[SpecialWeapons] MutateWarhead=` (`+0xF98`, read at `0x006690BB`
     /// through WarheadTypeClass::FindOrAllocate `0x0075E3B0`): the warhead
@@ -2741,6 +2745,8 @@ impl Default for GeneralRules {
             force_shield_fade_sound_time: 50,
             force_shield_invoke_anim: String::new(),
             psychic_reveal_radius: 3,
+            #[cfg(feature = "ares")]
+            enemy_insignia: true,
             mutate_warhead: String::new(),
             mutate_explosion_warhead: String::new(),
             empulse_warhead: None,
@@ -4046,6 +4052,8 @@ impl GeneralRules {
             force_shield_fade_sound_time: general.read_int("ForceShieldPlayFadeSoundTime", 50),
             force_shield_invoke_anim: defaults.force_shield_invoke_anim.clone(),
             psychic_reveal_radius,
+            #[cfg(feature = "ares")]
+            enemy_insignia: general.read_ares_bool("EnemyInsignia", defaults.enemy_insignia),
             // The constructor's nulls; only the ordered Process owner reads
             // them (`RulesTypeReferences`).
             mutate_warhead: String::new(),

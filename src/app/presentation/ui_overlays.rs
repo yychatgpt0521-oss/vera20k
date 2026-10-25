@@ -1203,21 +1203,65 @@ pub(crate) fn techno_extras_for_parent(
         ),
     );
     if !disguised && character != 5 {
-        use crate::sim::combat::veterancy::{raw_is_elite, raw_is_negative, raw_is_veteran};
+        #[cfg(not(feature = "ares"))]
+        use crate::sim::combat::veterancy::raw_is_negative;
+        use crate::sim::combat::veterancy::{raw_is_elite, raw_is_veteran};
         //70A999's +88 getter is discarded (Unit741490, Building459EE0);
         // there is no Trainable gate.70A9B2/C2/D2 tests the raw accumulator,
         // not the cached/quantized rank. A negative value selects frame19.
         let raw = entity.veterancy.raw();
-        let frame = if raw_is_veteran(raw) {
-            Some(14)
-        } else if raw_is_elite(raw) {
-            Some(15)
-        } else if raw_is_negative(raw) {
-            Some(19)
-        } else {
-            None
+        // Ares TechnoClass_DrawVeterancy replaces 70A990 whole
+        // (Ext/Techno/Hooks.Insignia.cpp): enemies draw nothing unless
+        // Insignia.ShowEnemy/[General] EnemyInsignia allow it; a type's
+        // per-rank Insignia SHP draws frame0; otherwise PIPS elite15/veteran14,
+        // with no negative frame19. Same offsets and THEATER_PAL material.
+        #[cfg(feature = "ares")]
+        let rank_art = {
+            let can_see = local_owner.is_none_or(|player| {
+                crate::map::houses::is_allied_with(
+                    sim.house_alliances(),
+                    sim.interner().resolve(entity.owner()),
+                    player,
+                )
+            }) || object
+                .and_then(|object| object.insignia_show_enemy())
+                .unwrap_or_else(|| rules.is_none_or(|rules| rules.general.enemy_insignia));
+            let custom = object
+                .and_then(|object| object.insignia(crate::sim::combat::veterancy::rank_of(raw)))
+                .and_then(|name| overlay.insignia(name));
+            if !can_see {
+                None
+            } else if let Some(custom) = custom {
+                Some((custom, 0))
+            } else {
+                let frame = if raw_is_elite(raw) {
+                    Some(15)
+                } else if raw_is_veteran(raw) {
+                    Some(14)
+                } else {
+                    None
+                };
+                frame
+                    .zip(overlay.pips())
+                    .map(|(frame, shape)| (shape, frame))
+            }
         };
-        if let (Some(frame), Some(shape)) = (frame, overlay.pips()) {
+        #[cfg(not(feature = "ares"))]
+        let rank_art = {
+            let frame = if raw_is_veteran(raw) {
+                Some(14)
+            } else if raw_is_elite(raw) {
+                Some(15)
+            } else if raw_is_negative(raw) {
+                Some(19)
+            } else {
+                None
+            };
+            frame
+                .zip(overlay.pips())
+                .map(|(frame, shape)| (shape, frame))
+        };
+        if let Some((shape, frame)) = rank_art {
             let (dx, dy) = if entity.category() == EntityCategory::Infantry {
                 (5.0, 2.0)
             } else {

@@ -57,6 +57,11 @@ pub struct SelectionOverlay {
     /// Phobos then draws that display with the game font.
     #[cfg(feature = "phobos")]
     digital_shapes: Vec<Option<CenteredShapeStrip>>,
+    /// Ares `Insignia*` SHPs by lowercase base name, loaded once per match in
+    /// PIPS's palette (both draw through THEATER_PAL 0x87F6C4). `None` for a
+    /// missing file, which leaves the stock PIPS rank.
+    #[cfg(feature = "ares")]
+    insignia: std::collections::HashMap<String, Option<CenteredShapeStrip>>,
 }
 
 /// Every frame of one SHP packed side by side at its stored size, each with
@@ -444,7 +449,46 @@ impl SelectionOverlay {
             pips,
             #[cfg(feature = "phobos")]
             digital_shapes: Vec::new(),
+            #[cfg(feature = "ares")]
+            insignia: std::collections::HashMap::new(),
         }
+    }
+
+    /// Load every named Ares insignia SHP once per match, as Ares's reader
+    /// resolves `<name>.shp` when Rules are read.
+    #[cfg(feature = "ares")]
+    pub(crate) fn load_insignia_shapes<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        batch: &BatchRenderer,
+        assets: &AssetManager,
+        names: impl Iterator<Item = &'a str>,
+    ) {
+        for name in names {
+            let key = name.to_ascii_lowercase();
+            if self.insignia.contains_key(&key) {
+                continue;
+            }
+            let strip = CenteredShapeStrip::from_assets_on_device(
+                device,
+                queue,
+                batch,
+                assets,
+                &format!("{name}.shp"),
+                "palette.pal",
+            );
+            if strip.is_none() {
+                log::warn!("Ares insignia {name}.shp is missing; stock PIPS rank stays");
+            }
+            self.insignia.insert(key, strip);
+        }
+    }
+
+    /// A loaded Ares insignia SHP by base name.
+    #[cfg(feature = "ares")]
+    pub(crate) fn insignia(&self, name: &str) -> Option<&CenteredShapeStrip> {
+        self.insignia.get(&name.to_ascii_lowercase())?.as_ref()
     }
 
     /// Load each `[DigitalDisplayTypes]` entry's `Shape=`/`Palette=` once per
@@ -484,10 +528,7 @@ impl SelectionOverlay {
 
     /// One catalog entry's custom SHP, when loaded.
     #[cfg(feature = "phobos")]
-    pub(crate) fn digital_shape(
-        &self,
-        index: usize,
-    ) -> Option<&CenteredShapeStrip> {
+    pub(crate) fn digital_shape(&self, index: usize) -> Option<&CenteredShapeStrip> {
         self.digital_shapes.get(index)?.as_ref()
     }
 
