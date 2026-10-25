@@ -7,7 +7,8 @@
 //! remain testable without an audio device.
 //!
 //! gamemd-derived: singleton `g_Theme @ 0x00A83D10`; ctor `0x00720960`,
-//! catalog load `0x00720590` (THEMEMD.INI only, string `0x00825D94`), entry
+//! catalog load `0x00720590` (THEMEMD.INI only, string `0x00825D94`; MO's
+//! spawner retargets it to THEMEMO.INI, see `IniRoots::theme`), entry
 //! reader `0x00720480`, availability scan `0x007207F0`, `From_Name`
 //! `0x00721210`, `Is_Allowed` `0x00721140`, `Next_Song` `0x00720A80`,
 //! `Queue_Song` `0x00720B20`, `Play_Song` `0x00720BB0`, `Stop` `0x00720EA0`,
@@ -32,7 +33,6 @@ use crate::audio::sfx::upmix_i16_to_f32_stereo;
 use crate::rules::ini_parser::{IniFile, IniSection};
 use crate::util::native_x87::X87Chop53;
 
-const THEME_INI_NAME: &str = "thememd.ini";
 const RA2_THEME_INI_NAME: &str = "theme.ini";
 const MENU_THEME_SECTION: &str = "INTRO";
 /// `Next_Song` shuffle rejection budget (`CMP EDI,0x3E8` @ `0x00720AC6`).
@@ -359,7 +359,9 @@ impl ThemeRuntime {
         if self.catalog_loaded {
             return;
         }
-        if let Ok(selected) = crate::rules::retail_sources::select_ini(assets, THEME_INI_NAME) {
+        if let Ok(selected) =
+            crate::rules::retail_sources::select_ini(assets, assets.ini_roots().theme())
+        {
             self.entries = catalog_from_ini(&selected.ini);
         }
         scan_catalog_availability(&mut self.entries, assets);
@@ -1048,11 +1050,12 @@ fn scan_catalog_availability(entries: &mut [ThemeEntry], assets: &AssetManager) 
 /// without initializing an audio device or decoding whole songs.
 pub(crate) fn missing_install_music(assets: &AssetManager) -> Vec<String> {
     let mut missing = Vec::new();
-    for name in [THEME_INI_NAME, RA2_THEME_INI_NAME] {
+    let theme_ini = assets.ini_roots().theme();
+    for name in [theme_ini, RA2_THEME_INI_NAME] {
         let selected = match crate::rules::retail_sources::select_ini(assets, name) {
             Ok(selected) => selected,
             Err(error) => {
-                if name == THEME_INI_NAME {
+                if name == theme_ini {
                     missing.push(format!("{name}: {error}"));
                 }
                 continue;

@@ -37,7 +37,7 @@ impl AudioDefinitions {
     /// against the process sample index, selected before these readers as
     /// startup does (`406CE8` before `52C796`).
     pub fn select_admitting(assets: &AssetManager, index: Option<&AudioIndex>) -> Self {
-        let sound = select_ini(assets, "soundmd.ini")
+        let sound = select_ini(assets, assets.ini_roots().sound())
             .map_err(|error| log::warn!("Audio definitions: {error}"))
             .ok();
         let sounds = Arc::new(
@@ -47,7 +47,7 @@ impl AudioDefinitions {
                     SoundRegistry::from_ini_admitting(&selected.ini, index)
                 }),
         );
-        let eva = select_ini(assets, "evamd.ini")
+        let eva = select_ini(assets, assets.ini_roots().eva())
             .map_err(|error| log::warn!("Audio definitions: {error}"))
             .ok();
         let eva_registry = eva.as_ref().map_or_else(EvaRegistry::default, |selected| {
@@ -130,6 +130,38 @@ mod tests {
         assert_eq!(source.logical_name, "evamd.ini");
         assert_eq!(source.payload_len, evamd.len());
         assert_eq!(source.source_sha256, sha256_hex(evamd));
+    }
+
+    /// MO's spawner retargets SOUNDMD/EVAMD with the MO root triplet.
+    #[test]
+    fn mo_profile_selects_mo_sound_and_eva_catalogs() {
+        let directory = TestDirectory::new("mo-audio");
+        for name in ["rulesmo.ini", "artmo.ini", "aimo.ini"] {
+            directory.write(name, b"[General]\n");
+        }
+        directory.write("soundmd.ini", b"[SoundList]\n0=Yr\n[Yr]\nSounds=yr\n");
+        directory.write("soundmo.ini", b"[SoundList]\n0=Mo\n[Mo]\nSounds=mo\n");
+        directory.write(
+            "evamo.ini",
+            b"[DialogList]\n0=EVA_Mo\n[EVA_Mo]\nAllied=mo01\n",
+        );
+        let assets = AssetManager::from_loose_root_for_test(directory.path())
+            .with_ini_roots(&crate::util::ini_roots::IniRootConfig {
+                profile: crate::util::ini_roots::IniProfile::Mo,
+                ..Default::default()
+            })
+            .unwrap();
+        let definitions = AudioDefinitions::select(&assets);
+        assert!(definitions.sounds().get("Mo").is_some());
+        assert!(definitions.sounds().get("Yr").is_none());
+        assert_eq!(
+            definitions.eva().get("EVA_Mo", EvaSide::Allied),
+            Some("mo01")
+        );
+        assert_eq!(
+            definitions.sound_source().unwrap().logical_name,
+            "soundmo.ini"
+        );
     }
 
     #[test]

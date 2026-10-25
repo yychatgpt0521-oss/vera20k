@@ -3,8 +3,8 @@
 I adapted configurable root-file selection from my ra2-mono
 `GameConfig.cs` / `GameIniLoader.cs` into VERA's existing source owners.
 This selects one Rules, fixed Art and standalone AI root as a unit. It does
-not replace the parser, ordered Rules processing, AI registry/map passes,
-archive mounting or simulation authority.
+not replace the parser, ordered Rules processing, AI registry/map passes
+or simulation authority.
 
 ## Configuration
 
@@ -80,12 +80,31 @@ The GPU-free headless API also accepts an explicit root request through
 `headless_scenario::load_with_launch_and_ini`; existing headless entry points
 remain YR and never reread an unrelated cwd configuration.
 
+## Mental Omega names
+
+MO runs gamemd through its spawner (`cncnet5mo.dll`), which rewrites gamemd's
+file names before startup. An explicit `mo` profile applies the same renames:
+
+| YR name | MO name |
+| --- | --- |
+| `expandmd##.mix` (99..00) | `expandmo##.mix` |
+| `mapsmd##.mix`, `multimd.mix` | `mapsmo##.mix`, `multimo.mix` |
+| `movmd##.mix`, `thememd.mix` | `movmo##.mix`, `thememo.mix` |
+| `soundmd.ini`, `evamd.ini`, `thememd.ini` | `soundmo.ini`, `evamo.ini`, `thememo.ini` |
+
+MO's own Ares `debug.log` confirms the archive order (EXPANDMO99..94, mapsmo03,
+MULTIMO, movmo03, no EXPANDMD probe). Master, cache, local, audio, conquer and
+cameo archives keep their names. Archive names follow only an explicit `mo`:
+`auto` probes roots after mounting, so it keeps the YR archives. The asset
+tool's INI commands mount the same family; other asset commands stay YR.
+
 ## Scope and source
 
-This is root selection only. Sound/EVA/theme, mode/campaign catalogs, UI,
-localization, arbitrary MOD archives and Ares/Phobos gameplay tags are not
-retargeted. A directory missing required retail archives still cannot enter the
-normal game bootstrap. Selecting the MO triplet does not certify that every MO
+Mode/campaign catalogs, the spawner's BATTLEMO/MAPSELMO/MISSIONMO and mode INI
+renames, UI, localization, arbitrary MOD archives and Ares/Phobos gameplay tags
+are not retargeted. MO's mode INIs (`MPBattleMO.ini` etc.) are absent from its
+archives; its client supplies those settings. A directory missing required
+archives still cannot enter the normal game bootstrap. Selecting the MO triplet does not certify that every MO
 definition, asset or gameplay mechanism is supported.
 
 [Include and inheritance](ini-directives.md) expand at the selected source

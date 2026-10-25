@@ -2,7 +2,8 @@
 //!
 //! Adapted from my ra2-mono GameConfig/GameIniLoader file selection. VERA
 //! keeps one root per family and its existing native layer processing; this
-//! does not import mono's multi-file AI merging or change archive mounting.
+//! does not import mono's multi-file AI merging. The MO archive names follow
+//! the explicit profile through `ArchiveFamily` in the asset manager.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,6 +81,25 @@ impl IniRoots {
     }
     pub fn ai(&self) -> &str {
         &self.ai
+    }
+
+    /// MO's spawner (`cncnet5mo.dll`) retargets SOUNDMD, EVAMD and THEMEMD
+    /// together with the Rules/Art/AI roots; YR and custom keep the MD names.
+    pub fn sound(&self) -> &'static str {
+        self.audio_name("soundmd.ini", "soundmo.ini")
+    }
+    pub fn eva(&self) -> &'static str {
+        self.audio_name("evamd.ini", "evamo.ini")
+    }
+    pub fn theme(&self) -> &'static str {
+        self.audio_name("thememd.ini", "thememo.ini")
+    }
+    fn audio_name(&self, yr: &'static str, mo: &'static str) -> &'static str {
+        if self.profile == IniProfile::Mo {
+            mo
+        } else {
+            yr
+        }
     }
 
     pub fn names(&self) -> [&str; 3] {
