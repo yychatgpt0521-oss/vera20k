@@ -13,12 +13,12 @@ use crate::rules::armor::armor_index;
 use crate::rules::color_add::{ColorAddSelectors, ColorAddTable};
 use crate::rules::compatibility::RulesCompatibility;
 use crate::rules::crate_rules::CrateRules;
+use crate::rules::digital_display::DigitalDisplayTypeCatalog;
 use crate::rules::error::RulesError;
 use crate::rules::gunner_turrets::GunnerTurrets;
 use crate::rules::ini_parser::{IniFile, IniSection, is_native_none_type_name};
 use crate::rules::locomotor_type::SpeedType;
 use crate::rules::phobos_radiation::RadiationTypeCatalog;
-use crate::rules::digital_display::DigitalDisplayTypeCatalog;
 use crate::rules::phobos_shields::ShieldTypeCatalog;
 use crate::rules::sound_ini::EvaRegistry;
 
@@ -2360,7 +2360,7 @@ pub(crate) struct CountryVeterancyState {
 /// Live Side identity plus the immutable selected extension fields. The
 /// retained ProcessedType owns initialization and reads; the RuleSet view does
 /// not replay either. No extension exists in an ordinary retail build.
-pub(crate) type SideProjection<'a> = (&'a str, Option<(i32, bool, i32)>);
+pub(crate) type SideProjection<'a> = (&'a str, Option<(i32, bool, i32, i32)>);
 
 /// Ares3.0 SideExt constructor1002D9F0 and dispatcher1002B450 retain the phase
 /// with selected fields+88/+8C/+90. The first ReadTypeData entry initializes defaults
@@ -2374,6 +2374,10 @@ struct AresSideState {
     mix_file_index: i32,
     yuri_file_names: bool,
     eva_voice_index: i32,
+    /// SideExt `MessageTextColor=`, a runtime ColorScheme index (`[Colors]`
+    /// entry * 2) for trigger text messages (TAction hook 6DE0D3).
+    #[serde(default)]
+    message_text_color: i32,
 }
 
 #[cfg(feature = "ares")]
@@ -2386,6 +2390,7 @@ impl Default for AresSideState {
             mix_file_index: 0,
             yuri_file_names: false,
             eva_voice_index: -1,
+            message_text_color: 0,
         }
     }
 }
@@ -2412,6 +2417,14 @@ impl AresSideState {
             } else {
                 0
             };
+            // SideExt Initialize (Ext/Side/Body.cpp): literal scheme indices.
+            self.message_text_color = if id.eq_ignore_ascii_case("Nod") {
+                11
+            } else if id.eq_ignore_ascii_case("ThirdSide") {
+                25
+            } else {
+                21
+            };
             self.phase = 1;
         }
         if let Some(section) = pass.section(id) {
@@ -2431,6 +2444,31 @@ impl AresSideState {
                 section.read_ares_bool("Sidebar.YuriFileNames", self.yuri_file_names);
         }
         self.phase = 2;
+    }
+
+    /// SideExt LoadFromINIFile's `MessageTextColor` ValueableIdx read: a
+    /// found scheme replaces the index, a none name clears it to -1 and an
+    /// unknown name keeps it.
+    fn read_message_text_color(
+        &mut self,
+        id: &str,
+        pass: &IniFile,
+        find: impl Fn(&str) -> Option<i32>,
+    ) {
+        if !(0..=2).contains(&self.phase) {
+            return;
+        }
+        let Some(value) = pass
+            .section(id)
+            .and_then(|section| section.read_name("MessageTextColor", 0x800))
+        else {
+            return;
+        };
+        if let Some(index) = find(value) {
+            self.message_text_color = index;
+        } else if is_native_none_type_name(value) {
+            self.message_text_color = -1;
+        }
     }
 }
 
@@ -2775,6 +2813,7 @@ impl NativeRulesRegistryState {
                         state.mix_file_index,
                         state.yuri_file_names,
                         state.eva_voice_index,
+                        state.message_text_color,
                     )
                 });
                 #[cfg(not(feature = "ares"))]
@@ -5005,12 +5044,22 @@ impl RulesPassProcessor {
         // Country-only prepasses do not enter this hook. The live loop sees
         // only Sides allocated now, not any allocated by later Country reads.
         #[cfg(feature = "ares")]
-        for member in self.family_mut(RulesTypeFamily::Side) {
-            member
-                .ares_side
-                .as_mut()
-                .expect("allocated Side owns its Ares extension")
-                .read_pass(&member.native_stored_id, pass, _fixed_eva);
+        {
+            let colors = self.colors.clone();
+            let find = |name: &str| {
+                colors
+                    .iter()
+                    .position(|(id, _)| id.eq_ignore_ascii_case(name))
+                    .map(|index| (index as i32).wrapping_mul(2))
+            };
+            for member in self.family_mut(RulesTypeFamily::Side) {
+                let state = member
+                    .ares_side
+                    .as_mut()
+                    .expect("allocated Side owns its Ares extension");
+                state.read_pass(&member.native_stored_id, pass, _fixed_eva);
+                state.read_message_text_color(&member.native_stored_id, pass, find);
+            }
         }
         // Installed BeforeTypeData679A15 reads ArmorTypes/defaults before
         // any ordinary ObjectType/Warhead body in this Process pass.

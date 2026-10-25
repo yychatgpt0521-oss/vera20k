@@ -97,6 +97,33 @@ pub fn restate_briefing_key(ini: &IniFile, filename: &str) -> String {
     }
 }
 
+/// Ares `Sides_LoadTextColor_CacheSP` (hook at `0x00686D7F`,
+/// Ext/Side/Hooks.cpp) on the MISSION file Full_Init opened: the scenario
+/// section's `LoadScreenText.Color`, defaulting by filename prefix. The named
+/// ColorScheme, when it exists, then replaces the stock CD-based
+/// AlliedLoad/SovietLoad loading-text color (`Sides_LoadTextColor1` at 642B36).
+#[cfg(feature = "ares")]
+pub fn ares_load_screen_text_color(ini: &IniFile, filename: &str) -> String {
+    let prefix = |head: &str| {
+        filename
+            .get(..3)
+            .is_some_and(|start| start.eq_ignore_ascii_case(head))
+    };
+    let default = if prefix("SOV") {
+        "SovietLoad"
+    } else if prefix("YUR") {
+        "YuriLoad"
+    } else if prefix("TUT") {
+        "LightGrey"
+    } else {
+        "AlliedLoad"
+    };
+    ini.section(filename).map_or_else(
+        || default.to_owned(),
+        |section| section.read_string("LoadScreenText.Color", default, 0x800),
+    )
+}
+
 /// One scenario's retained MISSION loading fields. Source selection and pass
 /// ordering belong to the scenario loader; this owner only applies that pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -199,6 +226,20 @@ mod tests {
     use super::{CampaignLoadingMetadata, CampaignScenarioNames, restate_briefing_key};
     use crate::rules::ini_parser::IniFile;
     use serde_json::Value;
+
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_load_screen_text_color_reads_the_mission_or_its_prefix_default() {
+        // Mental Omega 3.3.6 MISSIONMO.INI.
+        let ini = IniFile::from_str(
+            "[ADEMON.MAP]\nLoadScreenText.Color=LightGrey\n[SOV01UMD.MAP]\nBriefing=x\n",
+        );
+        let color = |name| super::ares_load_screen_text_color(&ini, name);
+        assert_eq!(color("ADEMON.MAP"), "LightGrey");
+        assert_eq!(color("SOV01UMD.MAP"), "SovietLoad");
+        assert_eq!(color("ALL01UMD.MAP"), "AlliedLoad");
+        assert_eq!(color("tut01.map"), "LightGrey");
+    }
 
     #[test]
     fn campaign_mission_names_match_original_reader_and_retention() {

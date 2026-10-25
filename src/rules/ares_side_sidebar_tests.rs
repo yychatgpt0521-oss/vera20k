@@ -263,3 +263,26 @@ fn ares_side_sidebar_keys_are_inert_without_the_compiled_extension() {
         assert_eq!(rules.side_sidebar_yuri_file_names(index), None);
     }
 }
+
+#[cfg(feature = "ares")]
+#[test]
+fn message_text_color_names_a_scheme_and_unnamed_sides_keep_ares_defaults() {
+    // Mental Omega 3.3.6: [GDI] MessageTextColor=FirstText.
+    let mut colors = String::from("[Colors]\n");
+    for index in 0..13 {
+        colors.push_str(&format!("C{index}={index},1,1\n"));
+    }
+    colors.push_str("FirstText=130,255,255\n");
+    let processed = RulesLayerStack::new(IniFile::from_str(&format!(
+        "{colors}[Sides]\nGDI=Americans\nNod=Russians\nThirdSide=YuriCountry\n\
+         [GDI]\nMessageTextColor=FirstText\n[ThirdSide]\nMessageTextColor=Unknown\n"
+    )))
+    .process()
+    .unwrap();
+    let rules = RuleSet::from_processed_rules(&processed).unwrap();
+    assert_eq!(rules.side_message_text_hsv(0), Some([130, 255, 255]));
+    // SideExt Initialize: Nod 11 -> [Colors] entry 5; an unknown name keeps
+    // ThirdSide's 25 -> entry 12.
+    assert_eq!(rules.side_message_text_hsv(1), Some([5, 1, 1]));
+    assert_eq!(rules.side_message_text_hsv(2), Some([12, 1, 1]));
+}

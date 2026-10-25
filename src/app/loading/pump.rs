@@ -2449,6 +2449,8 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
             .ok_or_else(|| anyhow::anyhow!("campaign loading lost its asset manager"))?;
         let mut metadata = crate::rules::campaign_loading::CampaignLoadingMetadata::default();
         let mut names = state.match_state.campaign_names.clone();
+        #[cfg(feature = "ares")]
+        let mut ares_text_rgb = None;
         let csf = state.process_assets.csf.as_ref().ok_or_else(|| {
             anyhow::anyhow!("campaign loading requires the initialized CSF table")
         })?;
@@ -2470,6 +2472,18 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
                 .scenario();
             metadata.apply_ini(&selected.ini, scenario);
             names.apply_ini(&selected.ini, scenario, csf);
+            #[cfg(feature = "ares")]
+            {
+                let name = crate::rules::campaign_loading::ares_load_screen_text_color(
+                    &selected.ini,
+                    scenario,
+                );
+                ares_text_rgb = state.rules().and_then(|rules| {
+                    scheme_entry_by_name(&rules.color_schemes, &name)
+                        .and_then(|entry| scheme_hsv_by_entry(&rules.color_schemes, entry))
+                        .map(|hsv| normalize_rgb(hsv_to_rgb(hsv)))
+                });
+            }
         }
         let presentation = super::campaign_presentation::CampaignLoadingPresentation::new(
             &metadata,
@@ -2500,6 +2514,10 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
             .as_mut()
             .and_then(|session| session.native.as_mut())
             .expect("campaign native session");
+        #[cfg(feature = "ares")]
+        if let Some(text_rgb) = ares_text_rgb {
+            native.text_rgb = text_rgb;
+        }
         native.campaign_presentation = Some(presentation);
         native.campaign_names = Some(names);
         native.atlas = atlas;

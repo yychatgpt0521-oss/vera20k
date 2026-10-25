@@ -52,6 +52,12 @@ pub(crate) fn post_trigger_message(state: &mut AppState, csf_key: &str) {
         .and_then(|owner| runtime.simulation.houses().get(&owner))
         .map_or(0, |house| i32::from(house.side_index()));
     let rules = &runtime.resources.rules;
+    #[cfg(feature = "ares")]
+    let rgb = rules
+        .side_message_text_hsv(side)
+        .map(|hsv| crate::rules::color_scheme::hsv_to_rgb(hsv).map(|c| f32::from(c) / 255.0))
+        .unwrap_or_else(|| trigger_message_rgb(&rules.color_schemes, side));
+    #[cfg(not(feature = "ares"))]
     let rgb = trigger_message_rgb(&rules.color_schemes, side);
     let timeout = message_delay_timeout_ms(rules.general.message_delay_minutes);
     post_localized_message(

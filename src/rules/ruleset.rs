@@ -4187,7 +4187,7 @@ pub struct RuleSet {
     /// Read-only projection of the live SideExt owner, in the same native
     /// array order as side_ids. Rebuilt after every Process/reset/save restore.
     #[cfg(feature = "ares")]
-    side_extensions: Vec<(i32, bool, i32)>,
+    side_extensions: Vec<(i32, bool, i32, i32)>,
     /// Uppercase side identity -> source-order index.
     side_indices: HashMap<String, SideIdx>,
     /// Phobos `[SOMESIDE] Sidebar.GDIPositions=`, in `[Sides]` order.
@@ -7830,7 +7830,7 @@ impl RuleSet {
         return self
             .side_extensions
             .get(usize::from(index.0))
-            .map(|&(mix, _, _)| mix);
+            .map(|&(mix, _, _, _)| mix);
         #[cfg(not(feature = "ares"))]
         {
             let _ = index;
@@ -7845,7 +7845,7 @@ impl RuleSet {
         return self
             .side_extensions
             .get(usize::from(index.0))
-            .map(|&(_, yuri, _)| yuri);
+            .map(|&(_, yuri, _, _)| yuri);
         #[cfg(not(feature = "ares"))]
         {
             let _ = index;
@@ -7860,7 +7860,20 @@ impl RuleSet {
     pub fn side_eva_voice_index(&self, side: i32) -> Option<i32> {
         self.side_extensions
             .get(usize::try_from(side).ok()?)
-            .map(|&(_, _, voice)| voice)
+            .map(|&(_, _, voice, _)| voice)
+    }
+
+    /// SideExt `MessageTextColor` as `[Colors]` HSV: Ares replaces the stock
+    /// side-priority scheme of trigger text messages (TAction hook 6DE0D3)
+    /// with this runtime scheme index. `None` outside Ares or for a -1 index.
+    #[cfg(feature = "ares")]
+    pub fn side_message_text_hsv(&self, side: i32) -> Option<[u8; 3]> {
+        let index = self
+            .side_extensions
+            .get(usize::try_from(side).ok()?)
+            .map(|&(_, _, _, color)| color)?;
+        let entry = usize::try_from(index).ok()? / 2;
+        crate::rules::color_scheme::scheme_hsv_by_entry(&self.color_schemes, entry)
     }
 
     /// Return the country's effective side after its optional `Side=`
@@ -8714,7 +8727,7 @@ struct ProjectedCountrySideRegistry {
     country_indices: HashMap<String, CountryIdx>,
     side_ids: Vec<String>,
     #[cfg(feature = "ares")]
-    side_extensions: Vec<(i32, bool, i32)>,
+    side_extensions: Vec<(i32, bool, i32, i32)>,
     side_indices: HashMap<String, SideIdx>,
     country_sides: Vec<Option<SideIdx>>,
 }
