@@ -321,3 +321,23 @@ fn retail_toggle_types_do_not_require_dormant_laser_fence_or_cloak_generators() 
             .all(|o| !o.laser_fence_post && !o.cloak_generator)
     );
 }
+
+#[cfg(feature = "ares")]
+#[test]
+fn ares_auxiliary_power_action_adds_signed_output_to_the_selected_house() {
+    // Mental Omega SHAND/SFATAL: "146,11,<house>,0,0,0,0,<amount>". The
+    // fixture's House1 is Country7, the selector's Country index.
+    let (mut sim, rules, registry, houses) = fixture();
+    tests::install_event_ingress_map(
+        &mut sim,
+        &rules,
+        "[Triggers]\nAUX=Country0,<none>,Aux,0,1,1,1,0\n\
+         [Tags]\nAUX_TAG=0,Aux,AUX\n[Events]\nAUX=1,8,0,0\n\
+         [Actions]\nAUX=2,146,11,7,0,0,0,0,500,146,11,7,0,0,0,0,-120\n",
+    );
+    spawn(&mut sim, &rules, "LOAD", "House1", 15);
+    sim.raise_house_tags(houses[0], &rules, Some(&registry), FrameEffects::default());
+    sim.assess_power_for_test(&rules);
+    assert_eq!(sim.power_states[&houses[1]].total_output(), 380);
+    assert_eq!(sim.power_states[&houses[1]].total_drain(), 10);
+}

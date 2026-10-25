@@ -4448,6 +4448,21 @@ impl Simulation {
                     );
                 }
             }
+            // Ares 3.0 "Add auxiliary power for a House..." (Mental Omega's
+            // FAData.ini 146): the parameter-2 House selector, then the
+            // signed amount in token 8, which parameter type 11 reads as a
+            // number. Mental Omega's SHAND/SFATAL set it on 50 actions.
+            #[cfg(feature = "ares")]
+            146 => {
+                let (Some(live), Some(value)) = (context.live_index, value) else {
+                    return false;
+                };
+                let Some(owner) = self.live_action_house(live, value, rules) else {
+                    return false;
+                };
+                let amount = action.params.get(6).map_or(0, |token| crt_atoi(token));
+                self.power_states.house_mut(owner).add_aux_power(amount);
+            }
             142..=144 => {
                 let Some(value) = value else {
                     return false;

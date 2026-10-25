@@ -75,6 +75,11 @@ pub struct PowerState {
     /// House+577B: an admitted positive-output Building has DrainingMe.
     #[serde(default)]
     has_drained_power_source: bool,
+    /// Ares 3.0 HouseExt auxiliary power, changed only by trigger action
+    /// 146 ("Add auxiliary power for a House", amount may be negative) and
+    /// added to every assessment's building output.
+    #[serde(default)]
+    aux_power: i32,
     /// Native signed House power ratio is below one.
     is_low_power: bool,
     /// House+2A4/+2AC, read through the shared native countdown owner.
@@ -105,6 +110,7 @@ impl Default for PowerState {
             total_output: 0,
             total_drain: 0,
             has_drained_power_source: false,
+            aux_power: 0,
             is_low_power: false,
             //HouseCtor4F583D seeds the native current frame. Scenario Houses
             //are constructed at0; the empty retained timer is not stopped−1.
@@ -165,6 +171,12 @@ impl PowerState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_total_output_for_test(&mut self, value: i32) {
         self.total_output = value;
+    }
+
+    /// Trigger action 146's signed, accumulating auxiliary power change.
+    pub(crate) fn add_aux_power(&mut self, amount: i32) {
+        self.aux_power = self.aux_power.wrapping_add(amount);
+        self.invalidate(false);
     }
 
     pub(crate) fn invalidate(&mut self, radar: bool) {
@@ -261,6 +273,10 @@ impl PowerState {
         self.power_dirty.hash(hasher);
         self.radar_dirty.hash(hasher);
         self.radar_available.hash(hasher);
+        if self.aux_power != 0 {
+            b"aux-power-v1".hash(hasher);
+            self.aux_power.hash(hasher);
+        }
         // A house no outage ever reached keeps its established stream.
         if self.radar_outage_timer != crate::sim::timer::CdTimer::started(0, 0) {
             b"radar-outage-v1".hash(hasher);
@@ -600,6 +616,10 @@ fn recalculate_power_for_owner(
         drained = drained.wrapping_add(building_power_drain(entity, rules, interner));
     }
 
+    // Ares auxiliary power joins the building sum. Residual: Ares 3.0 is
+    // closed source; whether a spy blackout also zeroes it is unconfirmed,
+    // and this keeps the blackout's zero output for the whole House.
+    produced = produced.wrapping_add(state.aux_power);
     //508D4A stores the assessment byte;508D79 forces output to zero for
     // either the outage timer or a drained positive-output contributor.
     state.has_drained_power_source = has_drained_power_source;
