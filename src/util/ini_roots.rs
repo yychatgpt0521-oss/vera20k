@@ -83,18 +83,28 @@ impl IniRoots {
         &self.ai
     }
 
-    /// MO's spawner (`cncnet5mo.dll`) retargets SOUNDMD, EVAMD and THEMEMD
-    /// together with the Rules/Art/AI roots; YR and custom keep the MD names.
+    /// MO's spawner (`cncnet5mo.dll`) retargets SOUNDMD, EVAMD, THEMEMD and
+    /// the campaign BATTLEMD, MISSIONMD and MAPSELMD together with the
+    /// Rules/Art/AI roots; YR and custom keep the MD names.
     pub fn sound(&self) -> &'static str {
-        self.audio_name("soundmd.ini", "soundmo.ini")
+        self.spawner_name("soundmd.ini", "soundmo.ini")
     }
     pub fn eva(&self) -> &'static str {
-        self.audio_name("evamd.ini", "evamo.ini")
+        self.spawner_name("evamd.ini", "evamo.ini")
     }
     pub fn theme(&self) -> &'static str {
-        self.audio_name("thememd.ini", "thememo.ini")
+        self.spawner_name("thememd.ini", "thememo.ini")
     }
-    fn audio_name(&self, yr: &'static str, mo: &'static str) -> &'static str {
+    pub fn battle(&self) -> &'static str {
+        self.spawner_name("BATTLEMD.INI", "BATTLEMO.INI")
+    }
+    pub fn mission(&self) -> &'static str {
+        self.spawner_name("MISSIONMD.INI", "MISSIONMO.INI")
+    }
+    pub fn mapsel(&self) -> &'static str {
+        self.spawner_name("MAPSELMD.INI", "MAPSELMO.INI")
+    }
+    fn spawner_name(&self, yr: &'static str, mo: &'static str) -> &'static str {
         if self.profile == IniProfile::Mo {
             mo
         } else {
