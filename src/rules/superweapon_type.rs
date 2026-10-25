@@ -86,6 +86,27 @@ impl SuperWeaponKind {
         }
     }
 
+    /// The stock Action name this type's own targeting uses, as the retail
+    /// `[*Special]` sections spell it (`Nuke` for MultiMissile).
+    #[cfg(feature = "ares")]
+    const fn stock_action(self) -> Option<&'static str> {
+        Some(match self {
+            Self::MultiMissile => "Nuke",
+            Self::IronCurtain => "IronCurtain",
+            Self::LightningStorm => "LightningStorm",
+            Self::ChronoSphere => "ChronoSphere",
+            Self::ChronoWarp => "ChronoWarp",
+            Self::ParaDrop => "ParaDrop",
+            Self::AmerParaDrop => "AmerParaDrop",
+            Self::PsychicDominator => "PsychicDominator",
+            Self::SpyPlane => "SpyPlane",
+            Self::GeneticConverter => "GeneticConverter",
+            Self::ForceShield => "ForceShield",
+            Self::PsychicReveal => "PsychicReveal",
+            Self::GenericWarhead | Self::UnitDelivery | Self::NoEffect => return None,
+        })
+    }
+
     /// Parse from the INI `Type=` string value. Case-insensitive.
     pub fn from_ini_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
@@ -296,6 +317,20 @@ impl SuperWeaponType {
                         .unwrap_or("ParaDrop")
                         .to_string(),
                 ),
+                // Ares LoadFromRulesFile (Ext/SWType/Body.cpp) turns
+                // `Action=Custom` into its targeted SuperWeaponAllowed action;
+                // the stock name table has no such entry and would read None,
+                // which fires on the cameo click. Target through the type's
+                // own stock action instead. Residual: Ares's NewSWType
+                // targeting (Cursor=/NoCursor=, SW.Range, SW.FireIntoShroud
+                // checks) is not ported; stock targeting and launch run.
+                #[cfg(feature = "ares")]
+                _ if section
+                    .read_name("Action", 0x20)
+                    .is_some_and(|action| action.eq_ignore_ascii_case("Custom")) =>
+                {
+                    kind.stock_action().map(str::to_string)
+                }
                 _ => section.read_action_name("Action").map(str::to_string),
             },
             // ReadString 0x100, then a 24-byte copy (`0x006CEDB1`,
@@ -691,6 +726,24 @@ Type=BogusType
             default_sw.generic_warhead.as_ref().unwrap().ai_targeting,
             GenericWarheadAiTargeting::Offensive
         );
+    }
+
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_custom_action_targets_through_the_stock_action() {
+        // Mental Omega 3.3.6's Satellite Scan and Spy Plane.
+        let ini = IniFile::from_str(
+            "[SpySatSpecial]\nType=PsychicReveal\nAction=Custom\n\
+             [SpyPlaneSpecial]\nType=SpyPlane\nAction=custom\n\
+             [Plain]\nType=PsychicReveal\nAction=None\n",
+        );
+        let read = |id| SuperWeaponType::from_ini_section(id, ini.section(id).unwrap());
+        assert_eq!(
+            read("SpySatSpecial").action.as_deref(),
+            Some("PsychicReveal")
+        );
+        assert_eq!(read("SpyPlaneSpecial").action.as_deref(), Some("SpyPlane"));
+        assert_eq!(read("Plain").action.as_deref(), Some("None"));
     }
 
     #[cfg(not(feature = "ares"))]
