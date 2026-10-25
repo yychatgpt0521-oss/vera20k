@@ -860,9 +860,14 @@ pub fn stock_offline_start_callback_family(
     };
     let (ui_name, tooltip, override_file, map_filter, random_maps, allies, must_ally, family) =
         expected;
+    // Mental Omega's spawner (`cncnet5mo.dll`, `%sMO.INI`) renames each
+    // stock override to its MO twin; MO's MPModesMD.ini rows otherwise match
+    // these stock rows. The override's contents still go through the mode layer.
+    let mo_override = override_file.replace("MD.ini", "MO.ini");
     if mode.ui_name_key.eq_ignore_ascii_case(ui_name)
         && mode.tooltip_key.eq_ignore_ascii_case(tooltip)
-        && mode.override_file.eq_ignore_ascii_case(override_file)
+        && (mode.override_file.eq_ignore_ascii_case(override_file)
+            || mode.override_file.eq_ignore_ascii_case(&mo_override))
         && mode.map_filter.eq_ignore_ascii_case(map_filter)
         && mode.random_maps_allowed == random_maps
         && mode.allies_allowed == allies
@@ -5701,6 +5706,18 @@ mod tests {
                 PreFillScenarioPrefixPlanError::UnsupportedStockMode { id }
             );
         }
+    }
+
+    #[test]
+    fn scenario_prefix_accepts_mental_omega_override_names() {
+        let mut session = one_player_battle_launch("mo-mode.mmx").session().clone();
+        session.mode.override_file = "MPBattleMO.ini".to_string();
+        assert_eq!(
+            stock_offline_start_callback_family(&session),
+            Ok(StockOfflineStartCallbackFamily::Battle)
+        );
+        session.mode.override_file = "MPBattleXX.ini".to_string();
+        assert!(stock_offline_start_callback_family(&session).is_err());
     }
 
     #[test]
