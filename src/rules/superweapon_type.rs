@@ -232,6 +232,10 @@ pub struct SuperWeaponType {
     /// the same retention, `0x006CEBD8`): the cue the Force Shield's launch
     /// plays (`0x006CD176`).
     pub start_sound: Option<String>,
+    /// Ares SWTypeExt `EVA.Ready`/`EVA.Activated`/`EVA.Detected` and
+    /// `SW.Sound` (Ext/SWType/Body.cpp LoadFromINIFile).
+    #[cfg(feature = "ares")]
+    pub ares_audio: AresSuperWeaponAudio,
     /// `FlashSidebarTabFrames=` (`SuperWeaponTypeClass+0xE8`): constructor
     /// default `-1` at `0x006CE5B0`; `ReadINI @ 0x006CEA20` reads the current
     /// value with `ReadInt @ 0x005276D0`, without a clamp. The native
@@ -370,6 +374,8 @@ impl SuperWeaponType {
             unit_delivery: None,
             special_sound: section.read_name("SpecialSound", 0x80).map(str::to_string),
             start_sound: section.read_name("StartSound", 0x80).map(str::to_string),
+            #[cfg(feature = "ares")]
+            ares_audio: AresSuperWeaponAudio::from_ini(section),
             // The native constructor starts at -1; the final projected INI
             // retains a lower pass when later passes omit this key.
             flash_sidebar_tab_frames: section.read_int("FlashSidebarTabFrames", -1),
@@ -400,6 +406,45 @@ impl SuperWeaponType {
                     ),
                 }
             }),
+        }
+    }
+}
+
+/// One Ares ValueableIdx<VoxClass/VocClass> cue: `None` when the key is
+/// absent (the stock cue stays), `Some(None)` for an explicit `none`.
+#[cfg(feature = "ares")]
+pub type AresCue = Option<Option<String>>;
+
+/// Ares Super audio overrides. Under Ares every stock Type is handled by its
+/// NewSWType, whose Initialize supplies the stock cue as the default, so an
+/// absent key keeps VERA's stock cue table.
+#[cfg(feature = "ares")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct AresSuperWeaponAudio {
+    /// SuperClass_AnnounceReady (hook 6CBDD7).
+    pub eva_ready: AresCue,
+    /// SWTypeExt::Launch, before the money transaction.
+    pub eva_activated: AresCue,
+    /// BuildingClass detection announcement (hook in 446930..44699A).
+    pub eva_detected: AresCue,
+    /// SWTypeExt::Launch `VocClass::PlayAt` at the target cell.
+    pub sound: AresCue,
+}
+
+#[cfg(feature = "ares")]
+impl AresSuperWeaponAudio {
+    fn from_ini(section: &IniSection) -> Self {
+        let cue = |key| {
+            section.read_name(key, 0x800).map(|name| {
+                (!crate::rules::ini_parser::is_native_none_type_name(name))
+                    .then(|| name.to_string())
+            })
+        };
+        Self {
+            eva_ready: cue("EVA.Ready"),
+            eva_activated: cue("EVA.Activated"),
+            eva_detected: cue("EVA.Detected"),
+            sound: cue("SW.Sound"),
         }
     }
 }

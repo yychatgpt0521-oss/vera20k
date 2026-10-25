@@ -388,19 +388,33 @@ pub(super) fn dispatch_sim_sound_events(
                 // ForceShield's cue was dispatched at its early activation
                 // boundary; this later fact still reaches the shared Ready
                 // cleanup below without playing the cue twice.
-                let cue = if sw.kind == crate::rules::superweapon_type::SuperWeaponKind::ForceShield
+                #[cfg_attr(not(feature = "ares"), allow(unused_mut))]
+                let mut cue =
+                    if sw.kind == crate::rules::superweapon_type::SuperWeaponKind::ForceShield {
+                        SuperWeaponLaunchCue::default()
+                    } else {
+                        superweapon_launch_cue(sw.kind, &rules.general, sw.start_sound.as_deref())
+                    };
+                #[cfg_attr(not(feature = "ares"), allow(unused_mut))]
+                let mut eva_event = cue.eva_event.map(str::to_string);
+                // Ares SWTypeExt::Launch (Ext/SWType/Body.cpp): EVA.Activated
+                // and SW.Sound replace the type's default cue, the sound at
+                // the target cell.
+                #[cfg(feature = "ares")]
                 {
-                    SuperWeaponLaunchCue::default()
-                } else {
-                    superweapon_launch_cue(sw.kind, &rules.general, sw.start_sound.as_deref())
-                };
+                    if let Some(activated) = &sw.ares_audio.eva_activated {
+                        eva_event.clone_from(activated);
+                    }
+                    if let Some(sound) = &sw.ares_audio.sound {
+                        cue.sound_id.clone_from(sound);
+                        cue.positional = true;
+                    }
+                }
                 // The EVA column is picked for the *listening* client's
                 // side, not the launcher's: `VoxClass::PlayEVA` takes
                 // only the event name; the consumer resolves the side.
-                let eva_event = cue
-                    .eva_event
-                    .filter(|_| local_owner_name.is_some() && !sim.local_player_defeated())
-                    .map(str::to_string);
+                let eva_event = eva_event
+                    .filter(|_| local_owner_name.is_some() && !sim.local_player_defeated());
                 let activated = (cue.sound_id.is_some() || eva_event.is_some()).then(|| {
                     GameSoundEvent::SuperWeaponActivated {
                         sound_id: cue.sound_id.unwrap_or_default(),
@@ -410,15 +424,17 @@ pub(super) fn dispatch_sim_sound_events(
                 });
                 // The player's tail ([`launch_drops_ready_line`]): after
                 // the case's line, the queued Ready line is dropped.
-                if let Some(ready) = launch_drops_ready_line(sw.kind)
+                let ready = launch_drops_ready_line(sw.kind).map(str::to_string);
+                // Ares silences its own EVA.Ready line instead (Body.cpp 535).
+                #[cfg(feature = "ares")]
+                let ready = sw.ares_audio.eva_ready.clone().unwrap_or(ready);
+                if let Some(ready) = ready
                     && owner_is_local(sim.interner(), owner, local_owner_name)
                 {
                     if let Some(activated) = activated {
                         output.push(activated);
                     }
-                    output.push(GameSoundEvent::EvaRemove {
-                        event: ready.to_string(),
-                    });
+                    output.push(GameSoundEvent::EvaRemove { event: ready });
                     continue;
                 }
                 let Some(activated) = activated else {
@@ -844,14 +860,18 @@ pub(super) fn dispatch_sim_sound_events(
                     continue;
                 }
                 let type_name = sim.interner().resolve(sw_type);
-                let Some(event) = rules
-                    .super_weapon(type_name)
-                    .and_then(|sw| eva_producers::super_weapon_ready_event(sw.kind))
-                else {
+                let Some(sw) = rules.super_weapon(type_name) else {
+                    continue;
+                };
+                let event = eva_producers::super_weapon_ready_event(sw.kind).map(str::to_string);
+                // Ares SuperClass_AnnounceReady (hook 6CBDD7) plays EVA.Ready.
+                #[cfg(feature = "ares")]
+                let event = sw.ares_audio.eva_ready.clone().unwrap_or(event);
+                let Some(event) = event else {
                     continue;
                 };
                 GameSoundEvent::Eva {
-                    event: event.to_string(),
+                    event,
                     type_override: None,
                 }
             }
@@ -895,7 +915,7 @@ pub(super) fn dispatch_sim_sound_events(
                 ) {
                     continue;
                 }
-                let Some(event) = rules
+                let event = rules
                     .super_weapon_order
                     .iter()
                     .position(|section| section.eq_ignore_ascii_case(&type_name))
@@ -903,11 +923,18 @@ pub(super) fn dispatch_sim_sound_events(
                         let sw = rules.super_weapon(&type_name)?;
                         eva_producers::super_weapon_detected_event(sw.kind, index)
                     })
-                else {
+                    .map(str::to_string);
+                // Ares replaces the list-index line with EVA.Detected.
+                #[cfg(feature = "ares")]
+                let event = rules
+                    .super_weapon(&type_name)
+                    .and_then(|sw| sw.ares_audio.eva_detected.clone())
+                    .unwrap_or(event);
+                let Some(event) = event else {
                     continue;
                 };
                 GameSoundEvent::Eva {
-                    event: event.to_string(),
+                    event,
                     type_override: None,
                 }
             }
@@ -1246,6 +1273,49 @@ mod tests {
     use super::*;
     use crate::app::input::messages::HudMessage;
     use crate::util::fixed_math::SimFixed;
+
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_super_audio_keys_replace_the_stock_ready_launch_and_activation_cues() {
+        use crate::rules::ini_parser::IniFile;
+        // Mental Omega 3.3.6 [SpySatSpecial], with an explicit EVA.Activated.
+        let ini = crate::sim::arena_fixture::clear_ground_ini(
+            "[Countries]\n0=Americans\n1=Russians\n\
+             [SuperWeaponTypes]\n0=SpySatSpecial\n\
+             [SpySatSpecial]\nType=PsychicReveal\nAction=Custom\nRechargeTime=1\n\
+             EVA.Ready=EVA_BattlePowerReady\nSW.Sound=SpySatActivated\n\
+             EVA.Activated=EVA_SpySatActivated\n",
+        );
+        let rules = RuleSet::from_ini_with_fixed_art_for_test(&ini, &IniFile::empty()).unwrap();
+        let mut sim = crate::sim::arena_fixture::rival_arena(&rules, 31);
+        sim.intern_rule_type_ids(&rules);
+        let owner = sim.interner().get("Americans").unwrap();
+        let sw_type = sim.interner().get("SpySatSpecial").unwrap();
+        let mut output = SoundEventQueue::new();
+        dispatch_sim_sound_events(
+            vec![
+                SimSoundEvent::SuperWeaponReady { owner, sw_type },
+                SimSoundEvent::SuperWeaponLaunched {
+                    owner,
+                    sw_type,
+                    world: crate::sim::anim_class::AnimWorldCoord { x: 0, y: 0, z: 0 },
+                },
+            ],
+            &sim,
+            &rules,
+            Some("Americans"),
+            &mut |_| false,
+            &mut output,
+        );
+        let heard = output.drain();
+        assert!(matches!(&heard[0],
+            GameSoundEvent::Eva { event, .. } if event == "EVA_BattlePowerReady"));
+        assert!(matches!(&heard[1],
+            GameSoundEvent::SuperWeaponActivated { sound_id, eva_event: Some(eva), .. }
+                if sound_id == "SpySatActivated" && eva == "EVA_SpySatActivated"));
+        assert!(matches!(&heard[2],
+            GameSoundEvent::EvaRemove { event } if event == "EVA_BattlePowerReady"));
+    }
 
     fn dispatch_rules() -> RuleSet {
         RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
