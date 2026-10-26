@@ -1437,6 +1437,7 @@ pub(crate) fn build_building_anim_instances(
                 .iter()
                 .all(Option::is_none)
             || slot_anims_hidden_by_sale(building)
+            || !slot_anims_near_view(sim, building, viewport)
         {
             continue;
         }
@@ -1510,6 +1511,45 @@ pub(crate) fn build_building_anim_instances(
                 .detail_level as i32,
         );
     }
+}
+
+/// How far outside the view a slot anim's coordinate may lie and still put
+/// a frame on screen: [`super::anim_draw::anim_draw_pieces`]' own 200 px cull
+/// margin plus room for a frame's draw offset and size, which no slot anim
+/// art comes near.
+const SLOT_ANIM_CULL_MARGIN_PX: f32 = 200.0 + 1024.0;
+
+/// VERA-only presentation cull: whether any of `building`'s slot anims lies
+/// near enough to the view to draw a piece. Every piece of a farther one is
+/// culled by `anim_draw_pieces` anyway, so skipping its building saves the
+/// per-building material and lighting work of a map-wide walk; the body pass
+/// culls its anchor the same way.
+fn slot_anims_near_view(
+    sim: &crate::sim::world::Simulation,
+    building: &crate::sim::game_entity::GameEntity,
+    [x, y, width, height]: [f32; 4],
+) -> bool {
+    building
+        .building_art
+        .anim_slots()
+        .iter()
+        .flatten()
+        .any(|&anim| {
+            sim.anim_absolute_coord(anim).is_some_and(|coord| {
+                let (sx, sy, ..) = super::overlays::anim_world_render_coords(coord);
+                in_view(
+                    sx,
+                    sy,
+                    0.0,
+                    0.0,
+                    x,
+                    y,
+                    width,
+                    height,
+                    SLOT_ANIM_CULL_MARGIN_PX,
+                )
+            })
+        })
 }
 
 /// `BuildingClass::DrawIt` adds `ZShapePointMove=` to the BUILDNGZ origin

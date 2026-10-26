@@ -715,3 +715,51 @@ fn bunker_migration_keeps_active_anim_offsets_start_and_independent_membership()
         );
     }
 }
+
+/// The map-wide slot pass skips a building only when every slot anim lies
+/// beyond the cull margin, measured from the same anim point the pieces use.
+#[test]
+fn slot_anim_cull_keeps_buildings_within_the_margin_and_skips_farther_ones() {
+    let (sim, _rules, id, _atlas) = fixture("NATBNK", false);
+    let building = sim.entities().get(id).unwrap();
+    let anim = building
+        .building_art
+        .anim_slots()
+        .iter()
+        .flatten()
+        .copied()
+        .next()
+        .unwrap();
+    let (x, y, ..) = crate::app::presentation::instances::overlays::anim_world_render_coords(
+        sim.anim_absolute_coord(anim).unwrap(),
+    );
+    let nearest_x = building
+        .building_art
+        .anim_slots()
+        .iter()
+        .flatten()
+        .map(|&anim| {
+            crate::app::presentation::instances::overlays::anim_world_render_coords(
+                sim.anim_absolute_coord(anim).unwrap(),
+            )
+            .0
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    // A view whose right edge sits `gap` px left of the rightmost anim point.
+    let view_left_of = |gap: f32| [nearest_x - gap - 100.0, y - 50.0, 100.0, 100.0];
+    assert!(slot_anims_near_view(
+        &sim,
+        building,
+        [x - 50.0, y - 50.0, 100.0, 100.0]
+    ));
+    assert!(slot_anims_near_view(
+        &sim,
+        building,
+        view_left_of(SLOT_ANIM_CULL_MARGIN_PX)
+    ));
+    assert!(!slot_anims_near_view(
+        &sim,
+        building,
+        view_left_of(SLOT_ANIM_CULL_MARGIN_PX + 1.0)
+    ));
+}
