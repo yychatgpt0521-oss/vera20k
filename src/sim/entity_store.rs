@@ -67,6 +67,13 @@ pub struct EntityStore {
     /// stored entity's category never changes (a replacement comes through
     /// [`Self::insert`], which copies it). Kept and rebuilt as `owners` is.
     categories: Vec<EntityCategory>,
+    /// VERA-only: how many stored entities have each `type_ref`, for the
+    /// TechType Exists/Does Not Exist trigger events, which otherwise walk
+    /// every object for every trigger every frame. A stored entity's type
+    /// never changes, so [`Self::insert`] and [`Self::remove`] are its only
+    /// writers; rebuilt on load, never saved or hashed. Validated against a
+    /// walk by [`Self::count_of_type`]'s test.
+    type_counts: LookupMap<InternedId, u32>,
     /// Derived InfantryClass registry, in monotonic construction-ID order.
     /// Uninit retains an entry; remove compacts it. Class/category is immutable
     /// while stored, like indexed identity (replace through remove/insert).
@@ -129,6 +136,7 @@ impl Clone for EntityStore {
             slot_of: self.slot_of.clone(),
             owners: self.owners.clone(),
             categories: self.categories.clone(),
+            type_counts: self.type_counts.clone(),
             infantry_registry: self.infantry_registry.clone(),
             foot_registry: self.foot_registry.clone(),
             techno_registry: self.techno_registry.clone(),
@@ -159,6 +167,7 @@ impl EntityStore {
             slot_of: HashMap::default(),
             owners: Vec::new(),
             categories: Vec::new(),
+            type_counts: LookupMap::default(),
             infantry_registry: Vec::new(),
             foot_registry: Vec::new(),
             techno_registry: Vec::new(),
@@ -177,11 +186,17 @@ impl EntityStore {
         let infantry = category == EntityCategory::Infantry;
         let owner = entity.owner();
         let foot = category.is_foot();
-        // A replaced entity leaves the airborne set; this one joins it if the
-        // tracker holds it.
-        if let Some(entry) = self.get(id).and_then(airborne_entry) {
-            self.airborne.remove(&entry);
+        let type_ref = entity.type_ref();
+        // A replaced entity leaves the airborne set and its type's count; this
+        // one joins them.
+        if let Some(replaced) = self.get(id) {
+            let replaced_type = replaced.type_ref();
+            if let Some(entry) = airborne_entry(replaced) {
+                self.airborne.remove(&entry);
+            }
+            self.uncount_type(replaced_type);
         }
+        *self.type_counts.entry(type_ref).or_default() += 1;
         if let Some(entry) = airborne_entry(&entity) {
             self.airborne.insert(entry);
         }
@@ -250,6 +265,9 @@ impl EntityStore {
         if let Some(entry) = removed.as_ref().and_then(airborne_entry) {
             self.airborne.remove(&entry);
         }
+        if let Some(entity) = removed.as_ref() {
+            self.uncount_type(entity.type_ref());
+        }
         self.touched.note(stable_id, self.len());
         self.remove_infantry_index(stable_id);
         if let Ok(index) = self.foot_registry.binary_search(&stable_id) {
@@ -268,6 +286,23 @@ impl EntityStore {
             self.compact();
         }
         removed
+    }
+
+    fn uncount_type(&mut self, type_ref: InternedId) {
+        if let Some(count) = self.type_counts.get_mut(&type_ref) {
+            *count -= 1;
+            if *count == 0 {
+                self.type_counts.remove(&type_ref);
+            }
+        }
+    }
+
+    /// How many stored entities, of any class and in or out of limbo, have
+    /// `type_ref`.
+    pub(crate) fn count_of_type(&self, type_ref: InternedId) -> usize {
+        self.type_counts
+            .get(&type_ref)
+            .map_or(0, |&count| count as usize)
     }
 
     /// Drop the empty slots, keeping the order, and re-index.
@@ -732,6 +767,7 @@ impl<'de> serde::Deserialize<'de> for EntityStore {
             store.ids.push(id);
             store.owners.push(entity.owner());
             store.categories.push(entity.category());
+            *store.type_counts.entry(entity.type_ref()).or_default() += 1;
             store.entities.push(Some(entity));
         }
         store.rebuild_class_registries();
@@ -757,6 +793,37 @@ fn airborne_entry(entity: &GameEntity) -> Option<(u16, u64, u64)> {
 mod tests {
     use super::*;
     use crate::sim::game_entity::GameEntity;
+
+    #[test]
+    fn type_counts_follow_insert_replace_remove_and_load() {
+        let htnk = crate::sim::intern::test_intern("HTNK");
+        let apoc = crate::sim::intern::test_intern("APOC");
+        let walked = |store: &EntityStore, wanted| {
+            store
+                .values()
+                .filter(|entity| entity.type_ref() == wanted)
+                .count()
+        };
+        let mut store = EntityStore::new();
+        store.insert(GameEntity::test_default(1, "HTNK", "A", 1, 1));
+        store.insert(GameEntity::test_default(2, "HTNK", "A", 2, 1));
+        store.insert(GameEntity::test_default(3, "APOC", "B", 3, 1));
+        // Replacing an id moves it from its old type's count to its new one.
+        store.insert(GameEntity::test_default(2, "APOC", "B", 2, 1));
+        assert_eq!(
+            (store.count_of_type(htnk), store.count_of_type(apoc)),
+            (1, 2)
+        );
+        store.remove(3);
+        store.remove(3);
+        let loaded: EntityStore =
+            serde_json::from_value(serde_json::to_value(&store).unwrap()).unwrap();
+        for store in [&store, &loaded] {
+            assert_eq!(store.count_of_type(htnk), walked(store, htnk));
+            assert_eq!(store.count_of_type(apoc), walked(store, apoc));
+            assert_eq!(store.count_of_type(apoc), 1);
+        }
+    }
 
     /// Populated original412B40 ->4137A0 controls. Buckets hold opaque
     /// tokens; the last numeric row deliberately repeats a token in two

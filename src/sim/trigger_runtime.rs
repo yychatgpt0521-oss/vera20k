@@ -5060,28 +5060,17 @@ fn parse_visible_map_area(fields: &[String]) -> Option<[i32; 4]> {
 }
 
 /// Whether at least `limit` stored objects have the case-insensitive type
-/// name `type_id`. Like the native scan (71EA03), it stops once the
-/// threshold is met. The interner keys names case-insensitively, so one
-/// lookup gives the only id a matching object can carry; the scan compares
-/// integers. Mental Omega's SHAND has 228 Event 60/61 conditions over
-/// ~5,000 objects.
+/// name `type_id`, the threshold the native scan (71EA03) stops at. The
+/// interner keys names case-insensitively, so one lookup gives the only id a
+/// matching object can carry, and the store keeps each id's count. Mental
+/// Omega's SHAND has 228 Event 60/61 conditions over ~5,000 objects.
 fn techtype_count_at_least(sim: &Simulation, type_id: &str, limit: usize) -> bool {
     if limit == 0 {
         return true;
     }
-    let Some(wanted) = sim.interner.get(type_id) else {
-        return false;
-    };
-    let mut count = 0;
-    for entity in sim.substrate.entities.values() {
-        if entity.type_ref() == wanted {
-            count += 1;
-            if count >= limit {
-                return true;
-            }
-        }
-    }
-    false
+    sim.interner
+        .get(type_id)
+        .is_some_and(|wanted| sim.substrate.entities.count_of_type(wanted) >= limit)
 }
 
 #[cfg(test)]
