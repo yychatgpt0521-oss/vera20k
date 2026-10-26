@@ -836,7 +836,11 @@ impl TriggerRuntime {
                 // Native71EA03 tests the signed threshold inside its scan:
                 // even a nonpositive threshold requires at least one Techno.
                 !sim.entities().is_empty()
-                    && count_techtype(sim, type_id) as i64 >= i64::from(min_count)
+                    && techtype_count_at_least(
+                        sim,
+                        type_id,
+                        usize::try_from(min_count).unwrap_or(0),
+                    )
             }
             EVENT_TECHTYPE_DOES_NOT_EXIST => {
                 let sim = simulation;
@@ -846,7 +850,7 @@ impl TriggerRuntime {
                 if type_id.is_empty() {
                     return false;
                 }
-                count_techtype(sim, type_id) == 0
+                !techtype_count_at_least(sim, type_id, 1)
             }
             _ => false,
         }
@@ -5055,16 +5059,30 @@ fn parse_visible_map_area(fields: &[String]) -> Option<[i32; 4]> {
     Some([atoi(2)?, atoi(3)?, atoi(4)?, atoi(5)?])
 }
 
-fn count_techtype(sim: &Simulation, type_id: &str) -> usize {
-    sim.substrate
-        .entities
-        .values()
-        .filter(|e| {
-            sim.interner
-                .resolve(e.type_ref())
-                .eq_ignore_ascii_case(type_id)
-        })
-        .count()
+/// Whether at least `limit` stored objects have the case-insensitive type
+/// name `type_id`. Like the native scan (71EA03), it stops once the
+/// threshold is met. Each distinct type handle compares its name once, so
+/// Mental Omega's large campaign maps (SHAND: 228 Event 60/61 conditions over
+/// ~5,000 objects) no longer resolve and compare every object's name.
+fn techtype_count_at_least(sim: &Simulation, type_id: &str, limit: usize) -> bool {
+    if limit == 0 {
+        return true;
+    }
+    let mut matches = std::collections::HashMap::new();
+    let mut count = 0;
+    for entity in sim.substrate.entities.values() {
+        let id = entity.type_ref();
+        if *matches
+            .entry(id)
+            .or_insert_with(|| sim.interner.resolve(id).eq_ignore_ascii_case(type_id))
+        {
+            count += 1;
+            if count >= limit {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

@@ -3530,6 +3530,27 @@ fn techtype_exists_and_not_exists_query_simulation_world() {
     assert!(advance_trigger_frame(&mut sim, 2, None, &HashMap::new()).is_empty());
 }
 
+#[test]
+fn techtype_exists_threshold_is_case_insensitive_and_counts_every_object() {
+    // Event 60 with a lower-case name: two GAPOWR meet 2 but not 3.
+    let map = trigger_fixture_map(
+        "[Triggers]\nTWO=Neutral,<none>,Two,0,1,1,1,0\nTHREE=Neutral,<none>,Three,0,1,1,1,0\n\
+         [Events]\nTWO=1,60,2,2,gapowr\nTHREE=1,60,2,3,gapowr\n\
+         [Actions]\nTWO=1,112,0,0,0,0,0,0,L\nTHREE=1,112,0,0,0,0,0,0,M\n\
+         [Tags]\nTWO_TAG=0,Two,TWO\nTHREE_TAG=0,Three,THREE\n",
+    );
+    let mut sim = Simulation::new();
+    install_map_triggers(&mut sim, &map);
+    spawn_type(&mut sim, "GAPOWR");
+    spawn_type(&mut sim, "GAAIRC");
+    spawn_type(&mut sim, "GAPOWR");
+    sim.classify_map_triggers(crate::rules::ruleset::RuleSet::empty_for_test());
+    let fired: usize = (0..3)
+        .map(|frame| advance_trigger_frame(&mut sim, frame, None, &HashMap::new()).len())
+        .sum();
+    assert_eq!(fired, 1, "only the threshold-2 trigger springs");
+}
+
 fn run_waypoint_action(
     kind: i32,
     token: Option<&str>,
