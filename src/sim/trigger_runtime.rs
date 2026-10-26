@@ -5061,21 +5061,20 @@ fn parse_visible_map_area(fields: &[String]) -> Option<[i32; 4]> {
 
 /// Whether at least `limit` stored objects have the case-insensitive type
 /// name `type_id`. Like the native scan (71EA03), it stops once the
-/// threshold is met. Each distinct type handle compares its name once, so
-/// Mental Omega's large campaign maps (SHAND: 228 Event 60/61 conditions over
-/// ~5,000 objects) no longer resolve and compare every object's name.
+/// threshold is met. The interner keys names case-insensitively, so one
+/// lookup gives the only id a matching object can carry; the scan compares
+/// integers. Mental Omega's SHAND has 228 Event 60/61 conditions over
+/// ~5,000 objects.
 fn techtype_count_at_least(sim: &Simulation, type_id: &str, limit: usize) -> bool {
     if limit == 0 {
         return true;
     }
-    let mut matches = std::collections::HashMap::new();
+    let Some(wanted) = sim.interner.get(type_id) else {
+        return false;
+    };
     let mut count = 0;
     for entity in sim.substrate.entities.values() {
-        let id = entity.type_ref();
-        if *matches
-            .entry(id)
-            .or_insert_with(|| sim.interner.resolve(id).eq_ignore_ascii_case(type_id))
-        {
+        if entity.type_ref() == wanted {
             count += 1;
             if count >= limit {
                 return true;

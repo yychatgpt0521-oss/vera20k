@@ -122,7 +122,13 @@ impl StringInterner {
 
     /// Look up an ID without inserting. Returns `None` if not yet interned.
     pub fn get(&self, s: &str) -> Option<InternedId> {
-        self.to_id.get(&s.to_ascii_uppercase()).copied()
+        // Most callers pass an already upper-case registry id; only
+        // allocate the normalized key when a lower-case byte needs it.
+        if s.bytes().any(|byte| byte.is_ascii_lowercase()) {
+            self.to_id.get(&s.to_ascii_uppercase()).copied()
+        } else {
+            self.to_id.get(s).copied()
+        }
     }
 
     /// Resolve an ID back to its display string (first-seen casing).

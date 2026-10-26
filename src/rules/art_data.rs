@@ -1100,6 +1100,17 @@ fn read_infantry_discharge_frames(section: &IniSection, frames: &mut [i32; 4]) {
     frames[3] = section.read_int("SecondaryProne", frames[3]);
 }
 
+/// The registry keys are `to_uppercase` forms. Render looks these up per
+/// object per frame with ids that are almost always upper-case already, so
+/// borrow those instead of allocating a folded copy.
+fn upper_key(id: &str) -> std::borrow::Cow<'_, str> {
+    if id.is_ascii() && !id.bytes().any(|byte| byte.is_ascii_lowercase()) {
+        std::borrow::Cow::Borrowed(id)
+    } else {
+        std::borrow::Cow::Owned(id.to_uppercase())
+    }
+}
+
 impl ArtRegistry {
     /// Parse all sections from an art.ini IniFile into the registry.
     pub fn from_ini(ini: &IniFile) -> Self {
@@ -1438,7 +1449,7 @@ impl ArtRegistry {
     /// Look up art entry for an image ID (case-insensitive).
     pub fn get(&self, image_id: &str) -> Option<&ArtEntry> {
         self.entry_names
-            .get(&image_id.to_uppercase())
+            .get(upper_key(image_id).as_ref())
             .and_then(|name| self.entries.get(name))
     }
 
@@ -1455,7 +1466,7 @@ impl ArtRegistry {
 
     /// Generic native-like AnimType runtime metadata for an art section.
     pub fn anim_runtime_config(&self, image_id: &str) -> Option<&AnimTypeRuntimeConfig> {
-        self.anim_runtime_configs.get(&image_id.to_uppercase())
+        self.anim_runtime_configs.get(upper_key(image_id).as_ref())
     }
 
     /// Apply the canonical RulesClass processing receipt before asset binding.
@@ -1790,7 +1801,7 @@ impl ArtRegistry {
     /// The building type constructor defaults this to true.
     pub fn can_hide_things(&self, type_id: &str) -> bool {
         self.can_hide_things
-            .get(&type_id.to_uppercase())
+            .get(upper_key(type_id).as_ref())
             .copied()
             .unwrap_or(true)
     }
@@ -1828,7 +1839,7 @@ impl ArtRegistry {
     /// missing sections fall back to 2, the documented building-art default.
     pub fn occupy_height(&self, image_id: &str) -> i32 {
         self.occupy_heights
-            .get(&image_id.to_uppercase())
+            .get(upper_key(image_id).as_ref())
             .copied()
             .unwrap_or(2)
     }
@@ -2076,7 +2087,7 @@ impl ArtRegistry {
 
     /// Mutable lookup; case-insensitive on the key.
     pub fn get_mut(&mut self, image_id: &str) -> Option<&mut ArtEntry> {
-        let name = self.entry_names.get(&image_id.to_uppercase())?;
+        let name = self.entry_names.get(upper_key(image_id).as_ref())?;
         self.entries.get_mut(name)
     }
 
