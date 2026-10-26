@@ -24,10 +24,11 @@ use crate::assets::pal_file::Palette;
 use crate::render::gpu::GpuContext;
 use crate::rules::house_colors::{HouseColorIndex, HouseColorRamps, NO_REMAP};
 
-/// Maximum number of houses supported in the per-house ramp texture
-/// (per project_scale_target). Row 0 is reserved for the no-remap fallback,
-/// so up to MAX_HOUSES - 1 distinct houses are addressable.
-pub const MAX_HOUSES: u32 = 32;
+/// Rows of the per-house ramp texture: row 0 is the no-remap fallback and
+/// row `hc + 1` holds `[Colors]` entry `hc`, so every `u8` entry below
+/// `NO_REMAP` has a row. Mental Omega lists 43 schemes; its Soviet
+/// `SovietLoad` is entry 41, which a 32-row texture dropped (black vehicles).
+pub const MAX_HOUSES: u32 = 256;
 
 /// Number of palette entries (RA2 standard: 256 colors).
 pub const PALETTE_ENTRIES: u32 = 256;
@@ -271,7 +272,7 @@ fn build_house_ramp_bytes(
         }
         let row: usize = house.0 as usize + 1;
         if row >= MAX_HOUSES as usize {
-            continue; // out of texture range (safety; shouldn't happen for stock [Colors]).
+            continue; // unreachable: every entry below NO_REMAP has a row.
         }
         let row_start: usize = row * row_bytes;
         let ramp = ramps.ramp(house);
@@ -354,6 +355,24 @@ mod tests {
         let row4_start = 4 * row_bytes;
         for i in 0..row_bytes {
             assert_eq!(bytes[row4_start + i], 0, "row 4 byte {} not zero", i);
+        }
+    }
+
+    #[test]
+    fn build_house_ramp_keeps_entries_past_the_thirty_second() {
+        // Mental Omega's SovietLoad is [Colors] entry 41.
+        let pal: Palette = dummy_palette();
+        let schemes: Vec<crate::rules::color_scheme::ColorSchemeEntry> = (0..255u8)
+            .map(|i| crate::rules::color_scheme::ColorSchemeEntry {
+                name: format!("S{i}"),
+                hsv: [i, 200, 240],
+            })
+            .collect();
+        let ramps = HouseColorRamps::from_schemes(&schemes);
+        for hc in [HouseColorIndex(41), HouseColorIndex(254)] {
+            assert!(ramps.ramp(hc).iter().any(|c| c.r | c.g | c.b != 0));
+            let bytes = build_house_ramp_bytes(&pal, &ramps, &[hc]);
+            assert_row_matches(&bytes, hc.0 as usize + 1, ramps.ramp(hc));
         }
     }
 
