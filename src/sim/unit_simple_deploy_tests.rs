@@ -693,3 +693,53 @@ fn landing_and_attached_animation_survive_snapshot_and_continue_identically() {
     assert!(entity.deploy_anim().is_some());
     compare_snapshot_continuation(sim, &rules, id, "simple deploy animation");
 }
+
+/// Ares `Convert.Deploy`: Mental Omega's `Selectable=no` reinforcement
+/// stand-ins (SHAND's `HTNK2`) become their playable type once the simple
+/// deploy completes, undeployed, at the same health ratio. A type without
+/// the key, or with `none`, stays deployed as itself.
+#[cfg(feature = "ares")]
+#[test]
+fn convert_deploy_turns_a_completed_simple_deploy_into_the_named_type() {
+    let ini = IniFile::from_str(
+        "[InfantryTypes]\n[AircraftTypes]\n[BuildingTypes]\n\
+         [VehicleTypes]\n0=STAND\n1=REAL\n2=PLAIN\n\
+         [STAND]\nStrength=200\nSelectable=no\nIsSimpleDeployer=yes\nConvert.Deploy=REAL\n\
+         [REAL]\nStrength=400\n\
+         [PLAIN]\nStrength=200\nIsSimpleDeployer=yes\nConvert.Deploy=none\n",
+    );
+    let rules = RuleSet::from_ini_with_fixed_art_for_test(&ini, &IniFile::from_str("")).unwrap();
+    let mut sim = Simulation::with_seed(0);
+    crate::sim::arena_fixture::flat_ground(&mut sim, &rules);
+    let stand = sim
+        .spawn_object("STAND", "Russians", 10, 10, 64, &rules)
+        .unwrap();
+    let plain = sim
+        .spawn_object("PLAIN", "Russians", 12, 10, 64, &rules)
+        .unwrap();
+    sim.substrate
+        .entities
+        .get_mut(stand)
+        .unwrap()
+        .health
+        .set_for_test(50);
+    for id in [stand, plain] {
+        sim.update_unit_simple_deploy(id, true, &rules, FrameEffects::default())
+            .unwrap();
+    }
+    let real = sim.interner.get("REAL").unwrap();
+    let converted = sim.substrate.entities.get(stand).unwrap();
+    assert_eq!(converted.type_ref(), real);
+    assert_eq!(converted.health.current(), 100);
+    assert_eq!(converted.mission_leaf.as_unit().unwrap().deployed(), 0);
+    assert_eq!(sim.substrate.entities.count_of_type(real), 1);
+    assert_eq!(
+        sim.substrate
+            .entities
+            .count_of_type(sim.interner.get("STAND").unwrap()),
+        0
+    );
+    let kept = sim.substrate.entities.get(plain).unwrap();
+    assert_eq!(sim.interner.resolve(kept.type_ref()), "PLAIN");
+    assert_eq!(kept.mission_leaf.as_unit().unwrap().deployed(), 1);
+}

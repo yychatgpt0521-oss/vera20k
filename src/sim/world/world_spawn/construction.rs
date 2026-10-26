@@ -762,3 +762,81 @@ fn should_construct_locomotor(category: EntityCategory, object: &ObjectType) -> 
 #[cfg(test)]
 #[path = "perma_disguise_tests.rs"]
 mod perma_disguise_tests;
+
+#[cfg(feature = "ares")]
+impl Simulation {
+    /// Ares 3.0 type conversion (`Convert.Deploy`): `id` takes `new_type`'s
+    /// identity in place, keeping its stable id, owner, position, mission,
+    /// team, veterancy and health ratio. Its House counts move from the old
+    /// type to the new one, and the facts the constructor stamps from the
+    /// type ([`Self::install_techno_components`]) are stamped again from the
+    /// new one. Ares 3.0 is closed source; this follows its documented
+    /// behavior. Answers whether the type changed; a type of another class
+    /// is refused.
+    ///
+    /// RESIDUAL: a conversion between locomotors installs the new type's
+    /// fresh, stopping movement in progress; ammo resets only when the two
+    /// `Ammo=` differ; cargo, the spawn/capture/temporal managers and the
+    /// turret controller keep the old type's. Mental Omega's campaign
+    /// stand-ins (`HTNK2` -> `HTNK`) share all of these with their targets.
+    pub(crate) fn ares_convert_type(&mut self, id: u64, new_type: &str, rules: &RuleSet) -> bool {
+        let Some(entity) = self.substrate.entities.get(id) else {
+            return false;
+        };
+        let category = entity.category();
+        let owner = entity.owner();
+        let Some(old) = self.entity_object_type(entity, rules) else {
+            return false;
+        };
+        let Some(new) = rules
+            .object(new_type)
+            .filter(|new| EntityCategory::from(new.category) == category)
+        else {
+            log::warn!(
+                "Ares conversion of {} to [{new_type}] refused: no such type of its class",
+                self.interner.resolve(entity.type_ref())
+            );
+            return false;
+        };
+        Self::update_house_tracking(
+            &mut self.substrate,
+            &mut self.houses,
+            id,
+            crate::sim::house_tracking::HouseTracking::remove_tracking,
+        );
+        let new_ref = self.interner.intern(&new.id);
+        self.substrate.entities.change_type(id, new_ref);
+        let frame = self.session.binary_frame();
+        let entity = self
+            .substrate
+            .entities
+            .get_mut(id)
+            .expect("the converted entity is stored");
+        let health = entity.health.current();
+        if old.strength > 0 && health > 0 {
+            let scaled = i64::from(health) * i64::from(new.strength) / i64::from(old.strength);
+            entity.health.set((scaled as i32).max(1));
+        }
+        stamp_scoring_flags(entity, Some(new), rules);
+        entity.sight.stamp_type_sight(new.sight);
+        entity.set_body_facing_rot(new.turret_rot);
+        entity.crushable_facts = CrushableFacts::stamp(new);
+        entity.mover_facts = MoverFacts::stamp(new);
+        entity.removal_facts.stamp_occupier(new.occupier);
+        stamp_building_cell_profile(entity, Some(new));
+        if old.ammo != new.ammo {
+            entity.initialize_ammo_from_type(new);
+        }
+        if old.locomotor != new.locomotor && should_construct_locomotor(category, new) {
+            entity.locomotor = Some(LocomotorState::from_object_type(new, frame));
+        }
+        Self::update_house_tracking(
+            &mut self.substrate,
+            &mut self.houses,
+            id,
+            crate::sim::house_tracking::HouseTracking::add_tracking,
+        );
+        self.houses.request_house_tech_tree_recheck(owner);
+        true
+    }
+}

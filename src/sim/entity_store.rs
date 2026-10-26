@@ -31,6 +31,11 @@ use crate::util::lookup_hash::LookupMap;
 /// Payload consumers can read owner identity but cannot construct this capability.
 pub(crate) struct OwnerChangeAuthority(());
 
+/// Only this module can write an entity's type, so the per-type counts
+/// ([`EntityStore::count_of_type`]) change with it.
+#[cfg(feature = "ares")]
+pub(crate) struct TypeChangeAuthority(());
+
 /// Only this module can write an entity's AircraftTracker membership, so the
 /// airborne set ([`EntityStore::airborne`]) changes with it.
 pub(crate) struct AirMembershipAuthority(());
@@ -69,8 +74,8 @@ pub struct EntityStore {
     categories: Vec<EntityCategory>,
     /// VERA-only: how many stored entities have each `type_ref`, for the
     /// TechType Exists/Does Not Exist trigger events, which otherwise walk
-    /// every object for every trigger every frame. A stored entity's type
-    /// never changes, so [`Self::insert`] and [`Self::remove`] are its only
+    /// every object for every trigger every frame. [`Self::insert`],
+    /// [`Self::remove`] and Ares conversion's `change_type` are its only
     /// writers; rebuilt on load, never saved or hashed. Validated against a
     /// walk by [`Self::count_of_type`]'s test.
     type_counts: LookupMap<InternedId, u32>,
@@ -584,6 +589,26 @@ impl EntityStore {
             e.set_owner_from_store(new_owner, OwnerChangeAuthority(()));
             self.owners[slot as usize] = new_owner;
         }
+    }
+
+    /// Ares type conversion's live type write, keeping the per-type counts.
+    /// No-op if the entity is absent or already has `new_type`.
+    #[cfg(feature = "ares")]
+    pub(crate) fn change_type(&mut self, stable_id: u64, new_type: InternedId) {
+        self.touched.note(stable_id, self.len());
+        let Some(&slot) = self.slot_of.get(&stable_id) else {
+            return;
+        };
+        let Some(entity) = self.entities[slot as usize].as_deref_mut() else {
+            return;
+        };
+        let old_type = entity.type_ref();
+        if old_type == new_type {
+            return;
+        }
+        entity.set_type_ref_from_store(new_type, TypeChangeAuthority(()));
+        self.uncount_type(old_type);
+        *self.type_counts.entry(new_type).or_default() += 1;
     }
 
     /// Write `stable_id`'s AircraftTracker membership, its bucket (`None`:

@@ -1013,6 +1013,10 @@ pub struct ObjectType {
     /// Ares `Insignia.ShowEnemy`; unset uses `[General] EnemyInsignia`.
     #[cfg(feature = "ares")]
     insignia_show_enemy: Option<bool>,
+    /// Ares 3.0 `Convert.Deploy`: the TechnoType an `IsSimpleDeployer=` unit
+    /// becomes once its deploy completes; `none` or unset keeps the type.
+    #[cfg(feature = "ares")]
+    convert_deploy: Option<String>,
     /// Immutable projection of the retained TechnoTypeExt+308/+314/+320/+321
     /// reader. Country identities bind during Process, never from merged INI.
     #[cfg(feature = "ares")]
@@ -2418,6 +2422,11 @@ impl ObjectType {
         self.insignia_show_enemy
     }
 
+    #[cfg(feature = "ares")]
+    pub fn convert_deploy(&self) -> Option<&str> {
+        self.convert_deploy.as_deref()
+    }
+
     /// Optional Ares tracking override (reader1003F47C, constructor1003CF8E).
     pub const fn keep_alive(&self) -> Option<bool> {
         #[cfg(feature = "ares")]
@@ -3563,6 +3572,11 @@ impl ObjectType {
             },
             #[cfg(feature = "ares")]
             insignia_show_enemy: section.read_ares_nullable_bool("Insignia.ShowEnemy", None),
+            #[cfg(feature = "ares")]
+            convert_deploy: section
+                .read_name("Convert.Deploy", 0x800)
+                .filter(|name| !name.eq_ignore_ascii_case("none"))
+                .map(str::to_owned),
             #[cfg(feature = "ares")]
             factory_owners: Default::default(),
             #[cfg(feature = "ares")]

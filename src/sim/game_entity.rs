@@ -1445,7 +1445,8 @@ impl GameEntity {
         self.building_loss_index = -1;
     }
 
-    /// Immutable indexed type identity, established by construction/decoding.
+    /// Indexed type identity, established by construction/decoding. Only Ares
+    /// type conversion changes it, through [`crate::sim::entity_store::EntityStore::change_type`].
     pub fn type_ref(&self) -> InternedId {
         self.type_ref
     }
@@ -1649,6 +1650,15 @@ impl GameEntity {
         let body = &self.body_facing;
         self.barrel_facing
             .get_or_insert_with(|| crate::sim::movement::FacingClass::with_rate_of(initial, body));
+    }
+
+    #[cfg(feature = "ares")]
+    pub(crate) fn set_type_ref_from_store(
+        &mut self,
+        type_ref: InternedId,
+        _: crate::sim::entity_store::TypeChangeAuthority,
+    ) {
+        self.type_ref = type_ref;
     }
 
     pub(crate) fn set_owner_from_store(

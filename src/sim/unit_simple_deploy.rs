@@ -209,7 +209,7 @@ impl Simulation {
         }
         // The native updaters request these sounds on every admitted visit,
         // independently of whether this call finished or merely waited.
-        Self::emit_deploy_action_sound(
+        let sound = Self::emit_deploy_action_sound(
             &mut self.interner,
             &self.substrate,
             self.resolved_terrain.as_ref(),
@@ -217,7 +217,42 @@ impl Simulation {
             id,
             if deploying { 27 } else { 31 },
             rules,
-        )
+        );
+        #[cfg(feature = "ares")]
+        if deploying {
+            self.ares_convert_on_deploy(id, rules);
+        }
+        sound
+    }
+
+    /// Ares 3.0 `Convert.Deploy`: a simple deploy that has just completed
+    /// turns the unit into that type, which starts undeployed. Mental Omega
+    /// brings campaign reinforcements as `Selectable=no` stand-ins that a
+    /// Deploy script converts into the playable type.
+    #[cfg(feature = "ares")]
+    fn ares_convert_on_deploy(&mut self, id: u64, rules: &RuleSet) {
+        let Some(entity) = self.substrate.entities.get(id) else {
+            return;
+        };
+        if entity
+            .mission_leaf
+            .as_unit()
+            .is_none_or(|leaf| leaf.deployed() == 0)
+        {
+            return;
+        }
+        let Some(target) = self
+            .object_type(entity.type_ref(), rules)
+            .and_then(|object| object.convert_deploy())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        if self.ares_convert_type(id, &target, rules)
+            && let Some(entity) = self.substrate.entities.get_mut(id)
+        {
+            entity.mission_leaf.set_unit_deployed(0);
+        }
     }
 
     fn start_unit_deploy_anim(
