@@ -78,6 +78,7 @@ pub use self::production_tech::{
     CameoDrawState, all_build_options_for_owner, cameo_draw_state, construction_options_for_owner,
     initial_construction_options,
 };
+pub use self::production_tech::strip_keeps_type;
 pub use self::production_tech::{
     building_base_foundation_cells, building_movement_blocking_cells,
     producer_candidates_for_owner_category,

@@ -1636,6 +1636,19 @@ fn advance_one_simulation_frame(
                         },
                     );
                 }
+                LifecycleOutput::SidebarRecalculated { owner } if Some(owner) == local_house => {
+                    let input = &mut state.match_state.input;
+                    if let Some(rt) = state.match_state.sim_runtime.as_ref() {
+                        input.drop_orphan_building_placement(|type_id| {
+                            crate::sim::production::strip_keeps_type(
+                                &rt.simulation,
+                                &rt.resources.rules,
+                                owner,
+                                type_id,
+                            )
+                        });
+                    }
+                }
                 LifecycleOutput::SidebarConstructionOption { .. }
                 | LifecycleOutput::SidebarRecalculated { .. }
                 | LifecycleOutput::ProductionBeginAttempted { .. }

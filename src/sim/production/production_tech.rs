@@ -149,6 +149,18 @@ pub(super) fn strip_keeps(
     strip_refusal(sim, rules, owner, obj).is_none()
 }
 
+/// [`strip_keeps`] by type name; a name no rules type carries is not kept.
+pub fn strip_keeps_type(
+    sim: &Simulation,
+    rules: &RuleSet,
+    owner: InternedId,
+    type_id: &str,
+) -> bool {
+    rules
+        .object(type_id)
+        .is_some_and(|obj| strip_keeps(sim, rules, owner, obj))
+}
+
 /// Which of [`strip_keeps`]'s two tests drops `obj` from the strip.
 fn strip_refusal(
     sim: &Simulation,

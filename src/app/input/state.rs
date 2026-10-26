@@ -559,6 +559,30 @@ impl MatchInputState {
         }
     }
 
+    /// VERA-only recovery: the local House's strip recalculation drops an
+    /// orphan placement (its product expired) whose type the strip no longer
+    /// keeps. Natively the orphan waits for the cameo's Right-click ABANDON
+    /// and HouseAbandon's cursor clear; a captured last Construction Yard
+    /// deletes the factory through UpdateFactoryQueue509140's direct abandon,
+    /// which has no HouseAbandon prefix, and the strip then loses the cameo,
+    /// leaving neither route, so the cursor stayed and blocked band
+    /// selection. A kept type (its factory and cameo remain) keeps the
+    /// recorded native orphan. Answers whether it cleared.
+    pub(crate) fn drop_orphan_building_placement(
+        &mut self,
+        keeps: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        let Some(crate::app::types::TargetingMode::BuildingPlacement(target)) =
+            &self.targeting_mode
+        else {
+            return false;
+        };
+        if target.product_id.is_some() || keeps(&target.type_id) {
+            return false;
+        }
+        self.clear_building_placement()
+    }
+
     /// BandBoxLeftUp4ABBF5..4ABC5D transfers current placement to the one
     /// saved transaction and drops the active cursor even if OutList is full.
     pub(crate) fn submit_building_placement(&mut self) {
@@ -747,3 +771,34 @@ mod house_cheer_tests;
 #[cfg(test)]
 #[path = "house_cheer_retail_tests.rs"]
 mod house_cheer_retail_tests;
+
+#[cfg(test)]
+mod orphan_placement_tests {
+    use super::*;
+
+    /// A captured last Construction Yard leaves an orphan GAPOWR placement
+    /// whose type the strip no longer keeps: the recalculation drops it. A
+    /// kept type, or a placement whose product still exists, stays.
+    #[test]
+    fn strip_recalculation_drops_only_an_orphan_the_strip_lost() {
+        let owner = crate::sim::intern::test_intern("USSR House");
+        let armed = || {
+            let mut input = MatchInputState::new(Default::default());
+            assert!(input.begin_building_placement("GAPOWR", 7, owner));
+            input
+        };
+        let mut live = armed();
+        assert!(!live.drop_orphan_building_placement(|_| false));
+        assert!(live.targeting_mode.is_some());
+
+        let mut kept = armed();
+        kept.building_placement_pointer_expired(7);
+        assert!(!kept.drop_orphan_building_placement(|type_id| type_id == "GAPOWR"));
+        assert!(kept.targeting_mode.is_some());
+
+        let mut lost = armed();
+        lost.building_placement_pointer_expired(7);
+        assert!(lost.drop_orphan_building_placement(|_| false));
+        assert!(lost.targeting_mode.is_none());
+    }
+}
