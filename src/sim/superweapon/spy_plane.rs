@@ -81,7 +81,7 @@ pub(super) fn launch(
                 SPY_PLANE,
                 MissionType::SpyplaneApproach,
                 (rx, ry),
-                None,
+                &[],
                 frame_effects,
             );
         }

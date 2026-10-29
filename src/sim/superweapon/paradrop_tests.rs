@@ -607,7 +607,7 @@ fn send_paradrop_planes_matches_native() {
             "PDPLANE",
             MissionType::ParadropApproach,
             TARGET,
-            Some((infantry, num)),
+            &[(infantry, num)],
             crate::sim::world::FrameEffects::default(),
         ));
 
@@ -1410,4 +1410,50 @@ fn ares_country_types_without_counts_send_nothing() {
         planes(&sim).is_empty(),
         "no side fallback after a false resolver"
     );
+}
+
+/// Mental Omega's `TankDropSpecial` shape: an AmerParaDrop super with its
+/// own `ParaDrop.*` keys sends `ParaDrop.Count` planes carrying vehicles and
+/// infantry, not the `[General] AmerParaDropInf=` E1s. Plane 2 takes its
+/// `Plane2` scope over the unscoped list (Ares docs, superweapons/types/paradrop).
+#[cfg(feature = "ares")]
+#[test]
+fn ares_super_paradrop_keys_send_count_planes_with_their_own_lists() {
+    let text = rules_text("AmerParaDropInf=E1\nAmerParaDropNum=8\n", true, 1024)
+        .replace("[VehicleTypes]\n", "[VehicleTypes]\n0=TANK\n")
+        .replace(
+            "Type=AmerParaDrop\n",
+            "Type=AmerParaDrop\nParaDrop.Count=2\nParaDrop.Types=TANK,E2\nParaDrop.Num=1,2\n\
+             ParaDrop.Plane2.Types=E2\nParaDrop.Plane2.Num=4\n[TANK]\nStrength=300\n",
+        );
+    let (rules, mut sim, owner) =
+        paradrop_world(RuleSet::from_ini(&IniFile::from_str(&text)).unwrap());
+    let sw_type = charge_super(&mut sim, owner, AMER_PARADROP);
+    assert!(launch(
+        &mut sim,
+        &rules,
+        owner,
+        TARGET.0,
+        TARGET.1,
+        ParaDropKind::American,
+        sw_type,
+        crate::sim::world::FrameEffects::default()
+    ));
+    let types = |plane: u64| {
+        let mut types: Vec<String> = cargo(&sim, plane)
+            .into_iter()
+            .map(|id| {
+                sim.interner
+                    .resolve(sim.substrate.entities.get(id).unwrap().type_ref())
+                    .to_owned()
+            })
+            .collect();
+        types.sort();
+        types
+    };
+    let [first, second] = planes(&sim)[..] else {
+        panic!("ParaDrop.Count=2 sends two planes");
+    };
+    assert_eq!(types(first), ["E2", "E2", "TANK"]);
+    assert_eq!(types(second), ["E2", "E2", "E2", "E2"]);
 }

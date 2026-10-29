@@ -473,6 +473,9 @@ pub struct SuperWeaponType {
     pub hunter_seeker: Option<crate::rules::hunter_seeker::HunterSeekerSettings>,
     /// Ares `Type=EMPulse` cannon settings, retained by the ordered reader.
     pub em_pulse: Option<crate::rules::em_pulse::EmPulseSettings>,
+    /// Ares per-super `ParaDrop.*` keys of a ParaDrop/AmerParaDrop super.
+    #[cfg(feature = "ares")]
+    pub ares_paradrop: crate::rules::ares_super_paradrop::AresSuperParaDrop,
 }
 
 impl SuperWeaponType {
@@ -613,6 +616,15 @@ impl SuperWeaponType {
             unit_delivery: None,
             hunter_seeker: None,
             em_pulse: None,
+            #[cfg(feature = "ares")]
+            ares_paradrop: if matches!(
+                kind,
+                SuperWeaponKind::ParaDrop | SuperWeaponKind::AmerParaDrop
+            ) {
+                crate::rules::ares_super_paradrop::AresSuperParaDrop::from_section(section)
+            } else {
+                Default::default()
+            },
             special_sound: section.read_name("SpecialSound", 0x80).map(str::to_string),
             start_sound: section.read_name("StartSound", 0x80).map(str::to_string),
             // The native constructor starts at -1; the final projected INI

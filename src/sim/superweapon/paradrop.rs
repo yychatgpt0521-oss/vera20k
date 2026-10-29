@@ -121,22 +121,73 @@ pub(crate) fn launch(
     let Some(cell) = drop_cell(sim, (target_rx, target_ry)) else {
         return true;
     };
+    #[cfg(feature = "ares")]
+    if let Some(settings) = rules
+        .super_weapon(sim.interner.resolve(sw_type))
+        .map(|sw| &sw.ares_paradrop)
+        .filter(|settings| settings.is_authored())
+    {
+        let country = country.map(str::to_owned);
+        launch_ares_super(
+            sim,
+            rules,
+            owner,
+            kind,
+            settings,
+            country.as_deref(),
+            side,
+            cell,
+            frame_effects,
+        );
+        return true;
+    }
+    let (types, counts, pairs_checked) = default_lists(rules, kind, country, side);
+    if pairs_checked && types.len() != counts.len() {
+        return true;
+    }
+    let Some(plane) = default_plane(rules, country, side) else {
+        return true;
+    };
+    for (index, infantry) in types.iter().enumerate() {
+        // The counts RESIDUAL: past the list, or negative, sends it empty.
+        let count = counts.get(index).copied().unwrap_or(0).max(0) as u32;
+        send_planes(
+            sim,
+            rules,
+            owner,
+            plane,
+            MissionType::ParadropApproach,
+            cell,
+            &[(infantry, count)],
+            frame_effects,
+        );
+    }
+    true
+}
+
+/// The lists a case uses without per-Super keys, and whether the sender
+/// checks that both lists are equally long.
+fn default_lists<'r>(
+    rules: &'r RuleSet,
+    kind: ParaDropKind,
+    country: Option<&str>,
+    side: Option<i32>,
+) -> (&'r [String], &'r [i32], bool) {
     let general = &rules.general;
-    let (types, counts, pairs_checked) = match kind {
+    match kind {
         ParaDropKind::American => (
             general.amer_paradrop.infantry.as_slice(),
             general.amer_paradrop.counts.as_slice(),
             true,
         ),
         // RESIDUAL (Ares): Ares replaces this launch (`SuperClass_Launch`
-        // hook `0x6CC390` -> `0x10074350`): per-Super `ParaDrop.*` keys, then
-        // the Country's (`0x1001BC20`/`0x1001BCB0`), then the Side's. VERA
-        // keeps the stock body with the Country and Side layers but no
-        // per-Super layer. Side lists for Soviet and any side >= 3 keep the
-        // stock unchecked pair, where Ares's sender `0x100741A0` sends
-        // nothing unless both lists are equally long and non-empty. Trigger:
-        // a mod with per-Super paradrop keys, or unequal Soviet/fourth-side
-        // lists. Effect: other passengers or plane. Never on retail data.
+        // hook `0x6CC390` -> `0x10074350`): per-Super `ParaDrop.*` keys
+        // ([`launch_ares_super`]), then the Country's (`0x1001BC20`/
+        // `0x1001BCB0`), then the Side's. Side lists for Soviet and any side
+        // >= 3 keep the stock unchecked pair, where Ares's sender `0x100741A0`
+        // sends nothing unless both lists are equally long and non-empty.
+        // Trigger: unequal Soviet/fourth-side lists. Effect: other passengers.
+        // Never on retail data.
         ParaDropKind::Generic => {
             // `GetParadropContent @ 0x1001BC20`: the country's own lists win
             // while its type list is non-empty. They always meet the sender's
@@ -167,28 +218,85 @@ pub(crate) fn launch(
                 }
             }
         }
-    };
-    if pairs_checked && types.len() != counts.len() {
-        return true;
     }
-    // Ares `[Side] ParaDrop.Aircraft=` replaces the PDPLANE type for both
-    // paradrop cases; an unset or `none` (-1) index falls back to PDPLANE.
-    // `GetParadropPlane @ 0x1001BCB0` puts the country's own aircraft in front
-    // of that, and its `-1` index defers to the side.
+}
+
+/// The plane without per-Super keys, if its type is known. Ares `[Side]
+/// ParaDrop.Aircraft=` replaces the PDPLANE type for both paradrop cases; an
+/// unset or `none` (-1) index falls back to PDPLANE. `GetParadropPlane @
+/// 0x1001BCB0` puts the country's own aircraft in front of that, and its `-1`
+/// index defers to the side.
+fn default_plane<'r>(
+    rules: &'r RuleSet,
+    country: Option<&str>,
+    side: Option<i32>,
+) -> Option<&'r str> {
     let plane = country
         .and_then(|country| rules.country_paradrop_aircraft(country))
         .or_else(|| rules.side_paradrop_aircraft(side.unwrap_or(-1)))
         .unwrap_or(PDPLANE);
-    let plane_known = rules
+    known_aircraft(rules, plane).then_some(plane)
+}
+
+fn known_aircraft(rules: &RuleSet, plane: &str) -> bool {
+    rules
         .aircraft_ids
         .iter()
-        .any(|id| id.eq_ignore_ascii_case(plane));
-    if !plane_known {
-        return true;
-    }
-    for (index, infantry) in types.iter().enumerate() {
-        // The counts RESIDUAL: past the list, or negative, sends it empty.
-        let count = counts.get(index).copied().unwrap_or(0).max(0) as u32;
+        .any(|id| id.eq_ignore_ascii_case(plane))
+}
+
+/// Ares per-Super paradrop keys (docs: superweapons/types/paradrop; Ares 3.0
+/// is closed source): `ParaDrop.Count=` planes, plane N taking the first of
+/// the `<Country>.PlaneN`, `<Side>.PlaneN`, `PlaneN`, `<Country>`, `<Side>`
+/// and unscoped values; aircraft and contents resolve independently and fall
+/// back to the lists and plane the super would use without them. Each plane
+/// carries its whole list (InfantryTypes and VehicleTypes), sent only when
+/// the types and counts are equally long and non-empty.
+///
+/// RESIDUAL: without per-Super keys VERA still sends one plane per list entry
+/// ([`launch`]), where Ares documents one plane per `ParaDrop.Count`.
+/// Trigger: a default list with several entries (Mental Omega's
+/// `AllyParaDropInf=E1,GGI`). Effect: two planes instead of one.
+#[cfg(feature = "ares")]
+#[allow(clippy::too_many_arguments)]
+fn launch_ares_super(
+    sim: &mut Simulation,
+    rules: &RuleSet,
+    owner: InternedId,
+    kind: ParaDropKind,
+    settings: &crate::rules::ares_super_paradrop::AresSuperParaDrop,
+    country: Option<&str>,
+    side: Option<i32>,
+    cell: (u16, u16),
+    frame_effects: FrameEffects<'_>,
+) {
+    let side_name = side
+        .and_then(|side| usize::try_from(side).ok())
+        .and_then(|index| rules.allocated_sides().nth(index))
+        .map(|(_, name)| name);
+    for plane_index in 1..=settings.count() {
+        let plane = match settings.aircraft(country, side_name, plane_index) {
+            Some(plane) => known_aircraft(rules, plane).then_some(plane),
+            None => default_plane(rules, country, side),
+        };
+        let Some(plane) = plane else {
+            continue;
+        };
+        let (types, counts) = match settings.contents(country, side_name, plane_index) {
+            Some(contents) => contents,
+            None => {
+                let (types, counts, _) = default_lists(rules, kind, country, side);
+                (types, counts)
+            }
+        };
+        if types.is_empty() || types.len() != counts.len() {
+            continue;
+        }
+        let payload: Vec<(&str, u32)> = types
+            .iter()
+            .zip(counts)
+            .map(|(name, &count)| (name.as_str(), count.max(0) as u32))
+            .collect();
         send_planes(
             sim,
             rules,
@@ -196,11 +304,10 @@ pub(crate) fn launch(
             plane,
             MissionType::ParadropApproach,
             cell,
-            Some((infantry, count)),
+            &payload,
             frame_effects,
         );
     }
-    true
 }
 
 /// The cell the planes take (`0x006CD303..0x006CD3BF`, case 6
@@ -287,7 +394,7 @@ pub(super) fn send_planes(
     plane_type: &str,
     mission: MissionType,
     target: (u16, u16),
-    payload: Option<(&str, u32)>,
+    payload: &[(&str, u32)],
     frame_effects: FrameEffects<'_>,
 ) -> bool {
     let owner_name = sim.interner.resolve(owner).to_string();
@@ -355,13 +462,13 @@ pub(super) fn send_planes(
         let _ = sim.discard_constructed_limbo(plane, rules, frame_effects);
         return false;
     }
-    if let Some((infantry, count)) = payload.filter(|&(_, count)| count != 0) {
+    for &(passenger, count) in payload.iter().filter(|&&(_, count)| count != 0) {
         board_passengers(
             sim,
             rules,
             plane,
             &owner_name,
-            infantry,
+            passenger,
             count,
             frame_effects,
         );
@@ -374,24 +481,26 @@ pub(super) fn send_planes(
 }
 
 /// SendParadropPlanes's passenger block (`0x0065E7BF..0x0065E7FB`): `count`
-/// passengers of `infantry`, each at the cargo's head. A plane whose type
+/// passengers of type `type_id`, each at the cargo's head. A plane whose type
 /// declares no `Passengers=` gets its hold here: native carries a CargoClass
-/// in every Foot.
+/// in every Foot. Stock lists name InfantryTypes; Ares's per-Super and
+/// country/side `ParaDrop.Types=` may also name VehicleTypes.
 fn board_passengers(
     sim: &mut Simulation,
     rules: &RuleSet,
     plane: u64,
     owner_name: &str,
-    infantry: &str,
+    type_id: &str,
     count: u32,
     frame_effects: FrameEffects<'_>,
 ) {
     let known = rules
         .infantry_ids
         .iter()
-        .any(|id| id.eq_ignore_ascii_case(infantry));
+        .chain(&rules.vehicle_ids)
+        .any(|id| id.eq_ignore_ascii_case(type_id));
     let Some(size) = rules
-        .object(infantry)
+        .object(type_id)
         .filter(|_| known)
         .map(|object| object.size)
     else {
@@ -399,7 +508,7 @@ fn board_passengers(
     };
     for _ in 0..count {
         let Some(passenger) = sim.construct_object_limbo_at_height(
-            infantry,
+            type_id,
             owner_name,
             0,
             0,
