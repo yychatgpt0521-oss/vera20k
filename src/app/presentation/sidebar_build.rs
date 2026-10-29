@@ -853,6 +853,8 @@ mod tests {
                 constraints_blocked: false,
                 #[cfg(feature = "ares")]
                 ares_refusal: None,
+                #[cfg(feature = "ares")]
+                ares_show_cameo: true,
                 display,
             }];
             let cameos = sidebar::cameo_order::CameoStrips::layout_fixture(&[], &[], &supers);

@@ -599,10 +599,27 @@ fn launch(
             }
             return activated;
         }
+        #[cfg(feature = "ares")]
+        SuperWeaponKind::EMPulse => {
+            let activated = super::em_pulse::launch(
+                sim,
+                rules,
+                owner,
+                sw,
+                (rx, ry),
+                overlay_registry,
+                frame_effects,
+            );
+            if activated {
+                super::finish_ares_launch(sim, rules, owner, sw_type_id, (rx, ry));
+            }
+            return activated;
+        }
         #[cfg(not(feature = "ares"))]
         SuperWeaponKind::GenericWarhead
         | SuperWeaponKind::UnitDelivery
-        | SuperWeaponKind::HunterSeeker => {}
+        | SuperWeaponKind::HunterSeeker
+        | SuperWeaponKind::EMPulse => {}
         SuperWeaponKind::MultiMissile => {
             super::nuke::launch(sim, rules, owner, sw_type_id, sw, (rx, ry));
         }

@@ -114,7 +114,8 @@ impl AiFireArm {
             | SuperWeaponKind::ChronoSphere
             | SuperWeaponKind::ChronoWarp
             | SuperWeaponKind::NoEffect
-            | SuperWeaponKind::HunterSeeker => Self::None,
+            | SuperWeaponKind::HunterSeeker
+            | SuperWeaponKind::EMPulse => Self::None,
         }
     }
 }
@@ -419,15 +420,22 @@ fn extension_target(
                 .is_ok()
                 .then_some(cell)
         }
+        // Ares docs (superweapons/targeting): "Self" selects a building of
+        // the firing house that provides this super and meets its power
+        // needs; the target is its center. Extras (range, designators) apply.
+        // Ares 3.0 is closed: the first such site in base order is taken.
+        M::SelfTarget => super::targeting::launch_sites(sim, rules, owner, sw)
+            .into_iter()
+            .filter(|(_, site)| site.eligible)
+            .map(|(_, site)| (site.center.0 as u16, site.center.1 as u16))
+            .find(|&cell| {
+                super::targeting::check_with_data(sim, rules, owner, sw, cell, true, &data).is_ok()
+            }),
         // These distinct3.0 selectors are still pending native ports. Do not
         // silently replace a parsed mode with Offensive or another behavior.
-        M::Stealth
-        | M::SelfTarget
-        | M::Base
-        | M::MultiMissile
-        | M::EnemyBase
-        | M::DropPod
-        | M::LightningRandom => None,
+        M::Stealth | M::Base | M::MultiMissile | M::EnemyBase | M::DropPod | M::LightningRandom => {
+            None
+        }
     }
 }
 

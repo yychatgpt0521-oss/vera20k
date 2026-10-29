@@ -60,6 +60,9 @@ pub enum SuperWeaponKind {
     UnitDelivery,
     /// Ares extension: launch UnitClass payloads from designated buildings.
     HunterSeeker,
+    /// Ares extension `Type=EMPulse`: cannon buildings fire their primary
+    /// weapon at the target or detonate it on themselves.
+    EMPulse,
     /// Constructor Type=-1: no recognized name has replaced it. Launch's
     /// unsigned guard6CC3AC returns without a case; ordinary ClickFire still
     /// consumes readiness or its one-time grant. This is not an extension.
@@ -72,7 +75,7 @@ impl SuperWeaponKind {
     pub(crate) const fn has_ares_handler(self) -> bool {
         matches!(
             self,
-            Self::GenericWarhead | Self::UnitDelivery | Self::HunterSeeker
+            Self::GenericWarhead | Self::UnitDelivery | Self::HunterSeeker | Self::EMPulse
         )
     }
 
@@ -94,6 +97,9 @@ impl SuperWeaponKind {
             Self::UnitDelivery => 0x101,
             Self::HunterSeeker => 0x102,
             Self::GenericWarhead => -1,
+            // RESIDUAL: Ares's own EMPulse type identity is not established;
+            // every consumer only tests the stock 0..12 range.
+            Self::EMPulse => -1,
             Self::NoEffect => -1,
         }
     }
@@ -115,7 +121,11 @@ impl SuperWeaponKind {
             Self::GeneticConverter => "GeneticConverter",
             Self::ForceShield => "ForceShield",
             Self::PsychicReveal => "PsychicReveal",
-            Self::GenericWarhead | Self::UnitDelivery | Self::HunterSeeker | Self::NoEffect => {
+            Self::GenericWarhead
+            | Self::UnitDelivery
+            | Self::HunterSeeker
+            | Self::EMPulse
+            | Self::NoEffect => {
                 return None;
             }
         })
@@ -142,6 +152,8 @@ impl SuperWeaponKind {
             "hunterseeker" => Some(Self::HunterSeeker),
             #[cfg(feature = "ares")]
             "genericwarhead" => Some(Self::GenericWarhead),
+            #[cfg(feature = "ares")]
+            "empulse" => Some(Self::EMPulse),
             _ => None,
         }
     }
@@ -434,9 +446,10 @@ pub struct SuperWeaponType {
     pub ai_defend_against: bool,
     /// When true, suspension doesn't auto-resume on power restore.
     pub manual_control: bool,
-    /// Phobos `SW.ShowCameo=`, read by `SWTypeExt` for the superweapon
-    /// sidebar's `AddButton` gate. Not the ordinary right-sidebar cameo.
-    #[cfg(feature = "phobos")]
+    /// `SW.ShowCameo=`, read by both extensions' `SWTypeExt`: Phobos gates
+    /// its superweapon sidebar's `AddButton` with it; Ares keeps an
+    /// `SW.AutoFire=yes` type's cameo off the ordinary right-sidebar strip.
+    #[cfg(any(feature = "ares", feature = "phobos"))]
     pub sw_show_cameo: bool,
     /// Phobos `SuperWeaponSidebar.Allow=`. Unset falls back to
     /// `[AudioVisual] SuperWeaponSidebar.AllowByDefault`.
@@ -458,6 +471,8 @@ pub struct SuperWeaponType {
     pub generic_warhead: Option<GenericWarheadSettings>,
     /// Pointer bindings retained by the ordered Ares reader.
     pub hunter_seeker: Option<crate::rules::hunter_seeker::HunterSeekerSettings>,
+    /// Ares `Type=EMPulse` cannon settings, retained by the ordered reader.
+    pub em_pulse: Option<crate::rules::em_pulse::EmPulseSettings>,
 }
 
 impl SuperWeaponType {
@@ -597,6 +612,7 @@ impl SuperWeaponType {
             insufficient_funds_eva: None,
             unit_delivery: None,
             hunter_seeker: None,
+            em_pulse: None,
             special_sound: section.read_name("SpecialSound", 0x80).map(str::to_string),
             start_sound: section.read_name("StartSound", 0x80).map(str::to_string),
             // The native constructor starts at -1; the final projected INI
@@ -604,7 +620,7 @@ impl SuperWeaponType {
             flash_sidebar_tab_frames: section.read_int("FlashSidebarTabFrames", -1),
             ai_defend_against: section.read_bool("AIDefendAgainst", false),
             manual_control: section.read_bool("ManualControl", false),
-            #[cfg(feature = "phobos")]
+            #[cfg(any(feature = "ares", feature = "phobos"))]
             sw_show_cameo: section.read_bool("SW.ShowCameo", true),
             #[cfg(feature = "phobos")]
             sw_sidebar_allow: section.read_bool_value("SuperWeaponSidebar.Allow"),

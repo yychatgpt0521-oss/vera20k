@@ -3126,6 +3126,16 @@ fn emit_detonation_receivers<'r>(
             .entities
             .get(detonation.source_id)
             .map(|source| source.owner());
+        // Ares applies the Iron Curtain warhead before EMP and AttachEffect.
+        crate::sim::superweapon::iron_curtain::apply_ares_warhead(
+            world,
+            rules,
+            overlay_registry,
+            coordinate,
+            source_house,
+            warhead,
+            effects,
+        );
         world.apply_ares_emp_detonation(
             coordinate,
             Some(detonation.source_id),
@@ -3494,8 +3504,11 @@ pub(crate) fn commit_projectile_detonations_inline(
             .payload
             .projectile_type()
             .and_then(|projectile| rules.projectile(world.interner.resolve(projectile)));
-        let death_weapon =
-            detonation.reason == crate::sim::projectile::ProjectileDetonationReason::DeathWeapon;
+        let death_weapon = matches!(
+            detonation.reason,
+            crate::sim::projectile::ProjectileDetonationReason::DeathWeapon
+                | crate::sim::projectile::ProjectileDetonationReason::PlacedBullet
+        );
         let (clusters, cluster_draws) = match projectile_type {
             Some(projectile) if !projectile.airburst && !death_weapon => {
                 (projectile.cluster.max(0), true)

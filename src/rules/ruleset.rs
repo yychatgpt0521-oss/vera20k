@@ -5393,6 +5393,15 @@ impl RuleSet {
                 sw.hunter_seeker = settings.cloned();
             }
         }
+        for (name, settings) in processed.em_pulse_states() {
+            if let Some(sw) = rules
+                .super_weapons
+                .values_mut()
+                .find(|sw| sw.id.eq_ignore_ascii_case(name))
+            {
+                sw.em_pulse = settings.cloned();
+            }
+        }
         for (name, delivery) in processed.unit_delivery_states() {
             if let Some(sw) = rules
                 .super_weapons

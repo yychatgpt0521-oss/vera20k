@@ -22,6 +22,13 @@ pub(crate) struct AresWarheadRules {
     #[cfg(feature = "ares")]
     #[serde(default = "default_effects_require_verses")]
     effects_require_verses: bool,
+    /// Ares `IronCurtain.Duration=` (frames; 0 none, negative shortens) and
+    /// `IronCurtain.Cap=` (-1 absolute, 0 unlimited stacking). Documented at
+    /// https://ares-developers.github.io/Ares-docs/new/warheads/ironcurtain.html.
+    #[serde(default)]
+    iron_curtain_duration: i32,
+    #[serde(default = "default_iron_curtain_cap")]
+    iron_curtain_cap: i32,
 }
 impl Default for AresWarheadRules {
     fn default() -> Self {
@@ -38,8 +45,14 @@ impl Default for AresWarheadRules {
             effects_require_damage: false,
             #[cfg(feature = "ares")]
             effects_require_verses: true,
+            iron_curtain_duration: 0,
+            iron_curtain_cap: -1,
         }
     }
+}
+
+fn default_iron_curtain_cap() -> i32 {
+    -1
 }
 impl AresWarheadRules {
     pub(crate) fn duration(&self) -> i32 {
@@ -47,6 +60,12 @@ impl AresWarheadRules {
     }
     pub(crate) fn cap(&self) -> i32 {
         self.cap
+    }
+    pub(crate) fn iron_curtain_duration(&self) -> i32 {
+        self.iron_curtain_duration
+    }
+    pub(crate) fn iron_curtain_cap(&self) -> i32 {
+        self.iron_curtain_cap
     }
     pub(crate) fn can_affect_house(
         &self,
@@ -98,6 +117,9 @@ impl AresWarheadRules {
     ) {
         self.duration = section.read_ares_int("EMP.Duration", self.duration);
         self.cap = section.read_ares_int("EMP.Cap", self.cap);
+        self.iron_curtain_duration =
+            section.read_ares_int("IronCurtain.Duration", self.iron_curtain_duration);
+        self.iron_curtain_cap = section.read_ares_int("IronCurtain.Cap", self.iron_curtain_cap);
         if let Some(sparkle) = sparkle {
             self.sparkles = sparkle;
         }

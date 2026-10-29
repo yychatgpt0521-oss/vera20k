@@ -338,6 +338,8 @@ mod tests {
                 constraints_blocked: false,
                 #[cfg(feature = "ares")]
                 ares_refusal: None,
+                #[cfg(feature = "ares")]
+                ares_show_cameo: true,
             },
         }
     }
@@ -390,6 +392,8 @@ mod tests {
                 constraints_blocked: false,
                 #[cfg(feature = "ares")]
                 ares_refusal: None,
+                #[cfg(feature = "ares")]
+                ares_show_cameo: true,
             })
             .collect()
     }

@@ -1032,6 +1032,10 @@ pub struct ObjectType {
     /// Add/Remove_Tracking owner; an explicit false is a distinct retained input.
     #[cfg(feature = "ares")]
     keep_alive: Option<bool>,
+    /// Ares `IronCurtain.Modifier=` (TechnoTypeExt, default 100%): scales a
+    /// positive Iron Curtain warhead duration; 0% makes the type immune.
+    #[cfg(feature = "ares")]
+    iron_curtain_modifier: NativeF64Bits,
     /// Ares TechnoTypeExt `Insignia` (Promotable<SHPStruct*>, Ext/TechnoType
     /// Body.cpp `Insignia.%s`): `Insignia` sets every rank, then
     /// `Insignia.Rookie/Veteran/Elite` override one. Each names `<value>.shp`;
@@ -2776,6 +2780,12 @@ impl ObjectType {
         self.convert_deploy = target.cloned();
     }
 
+    /// Ares `IronCurtain.Modifier=`, applied to positive warhead durations.
+    #[cfg(feature = "ares")]
+    pub(crate) const fn iron_curtain_modifier(&self) -> NativeF64Bits {
+        self.iron_curtain_modifier
+    }
+
     /// Optional Ares tracking override (reader1003F47C, constructor1003CF8E).
     pub const fn keep_alive(&self) -> Option<bool> {
         #[cfg(feature = "ares")]
@@ -4050,6 +4060,9 @@ impl ObjectType {
             no_manual_fire: section.read_ares_bool("NoManualFire", false),
             #[cfg(feature = "ares")]
             keep_alive: section.read_ares_nullable_bool("KeepAlive", None),
+            #[cfg(feature = "ares")]
+            iron_curtain_modifier: section
+                .read_ares_double_bits("IronCurtain.Modifier", NativeF64Bits::ONE),
             #[cfg(feature = "ares")]
             insignia: {
                 let read = |key| section.read_name(key, 0x800).map(str::to_owned);

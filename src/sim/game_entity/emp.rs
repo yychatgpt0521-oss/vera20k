@@ -47,6 +47,9 @@ impl GameEntity {
 }
 
 #[cfg(feature = "ares")]
+pub(crate) use receiver::capped_duration;
+
+#[cfg(feature = "ares")]
 mod receiver {
     use super::*;
     use crate::map::entities::EntityCategory;
@@ -69,7 +72,9 @@ mod receiver {
         Unsupported,
     }
     /// Installed10062476..100624B4; signed32 addition wraps before max0.
-    fn capped_duration(old: i32, delta: i32, cap: i32) -> i32 {
+    /// Ares's shared duration helper (Helpers::Alex::getCappedDuration),
+    /// also used by the Iron Curtain warhead.
+    pub(crate) fn capped_duration(old: i32, delta: i32, cap: i32) -> i32 {
         let sum = old.wrapping_add(delta);
         // Preserve10062476..A7's separate signed branches: moving max/min
         // across this wrapping add changes overflow and zero-cap removal.

@@ -166,6 +166,7 @@ pub(crate) fn launch(
                     id,
                     category,
                     Some(owner),
+                    rules.general.iron_curtain_duration,
                     frame_effects,
                 );
                 curtained += 1;
@@ -251,6 +252,7 @@ pub(crate) fn at_waypoint(
                     id,
                     category,
                     None,
+                    rules.general.iron_curtain_duration,
                     frame_effects,
                 );
             }
@@ -260,8 +262,10 @@ pub(crate) fn at_waypoint(
     true
 }
 
-/// One dispatch of ObjectClass vt+154. Both Super6CCFF8 and Action6E37C9
+/// One dispatch of ObjectClass vt+154 for `duration` frames. Super6CCFF8 and
+/// Action6E37C9 pass Rules+FE8; the Ares warhead passes its own length. All
 /// enter the same Infantry522600 / Foot4DEAE0 / Building457C90 overrides.
+#[allow(clippy::too_many_arguments)]
 fn curtain_object(
     sim: &mut Simulation,
     rules: &RuleSet,
@@ -269,9 +273,9 @@ fn curtain_object(
     id: u64,
     category: EntityCategory,
     house: Option<InternedId>,
+    duration: i32,
     frame_effects: FrameEffects<'_>,
 ) {
-    let duration = rules.general.iron_curtain_duration;
     match category {
         EntityCategory::Infantry => {
             receive_strength_as_c4(sim, rules, overlay_registry, id, house, true, frame_effects)
@@ -283,6 +287,118 @@ fn curtain_object(
             let frame = sim.session.binary_frame();
             if let Some(entity) = sim.substrate.entities.get_mut(id) {
                 apply_invulnerability(entity, frame, duration, InvulnKind::IronCurtain);
+            }
+        }
+    }
+}
+
+/// Ares `[Warhead] IronCurtain.Duration=` on detonation (the Bullet46920B
+/// hook, before EMP and AttachEffect). Documented at
+/// https://ares-developers.github.io/Ares-docs/new/warheads/ironcurtain.html;
+/// the body follows the public Ares source (`WarheadTypeExt::applyIronCurtain`,
+/// Ares 3.0 is closed). Each ground Techno the warhead's CellSpread reaches
+/// ([`Simulation::ares_effect_ground_targets`]) whose house the warhead may
+/// affect and whose Verses is not 0% gets a new length: the duration, a
+/// positive one scaled by the type's `IronCurtain.Modifier=`, capped against
+/// the time left ([`crate::sim::game_entity::ares_capped_duration`]). An object
+/// without a curtain gets IronCurtain (vt+0x154, [`curtain_object`]) for that
+/// length, so Infantry and Organic units die as natively; an active curtain
+/// restarts at it (tint stage 4) or stops at a non-positive length.
+///
+/// RESIDUALS:
+/// - Ares first deals the bullet's damage to an object it is about to
+///   curtain. Not ported: retail and Mental Omega curtain warheads deal 0 or
+///   -1 damage. Trigger: a damaging curtain warhead. Effect: the newly
+///   curtained object misses that hit.
+/// - Airborne victims, through the shared ground collector's residual.
+#[cfg(feature = "ares")]
+pub(crate) fn apply_ares_warhead(
+    sim: &mut Simulation,
+    rules: &RuleSet,
+    overlay_registry: Option<&OverlayTypeRegistry>,
+    impact: crate::sim::projectile::ProjectileCoord,
+    source_house: Option<InternedId>,
+    warhead: &crate::rules::warhead_type::WarheadType,
+    frame_effects: FrameEffects<'_>,
+) {
+    use crate::util::native_x87::MaskedX87Chop53 as X87;
+    let Some(settings) = warhead
+        .ares_rules()
+        .filter(|settings| settings.iron_curtain_duration() != 0)
+    else {
+        return;
+    };
+    let (duration, cap) = (
+        settings.iron_curtain_duration(),
+        settings.iron_curtain_cap(),
+    );
+    for id in sim.ares_effect_ground_targets(impact, warhead.cell_spread_f64, rules) {
+        let Some(victim) = sim.substrate.entities.get(id) else {
+            continue;
+        };
+        if victim.lifecycle.in_limbo() || !victim.lifecycle.object_alive() {
+            continue;
+        }
+        let Some(object) = sim.interner.object_type(victim.type_ref(), rules) else {
+            continue;
+        };
+        let allied = source_house.is_some_and(|house| {
+            crate::sim::combat::combat_weapon::is_ally_by_object(
+                Some(sim.house_alliances.as_map()),
+                &sim.interner,
+                house,
+                victim.owner(),
+            )
+        });
+        if !settings.can_affect_house(
+            source_house.is_some(),
+            source_house == Some(victim.owner()),
+            allied,
+            warhead.affects_allies,
+        ) {
+            continue;
+        }
+        if f64::from_bits(warhead.interaction(object.armor_id()).multiplier().bits()) == 0.0 {
+            continue;
+        }
+        let delta = if duration > 0 {
+            X87::ftol_i32_low_masked(X87::mul(
+                X87::load_i32(duration),
+                X87::load_f64(object.iron_curtain_modifier()),
+            ))
+        } else {
+            duration
+        };
+        let frame = sim.session.binary_frame();
+        let old = victim
+            .invulnerability
+            .as_ref()
+            .map_or(0, |state| state.timer().remaining(frame as i32).max(0));
+        let new = crate::sim::game_entity::ares_capped_duration(old, delta, cap);
+        let category = victim.category();
+        if old <= 0 {
+            if new > 0 {
+                curtain_object(
+                    sim,
+                    rules,
+                    overlay_registry,
+                    id,
+                    category,
+                    source_house,
+                    new,
+                    frame_effects,
+                );
+            }
+        } else if let Some(state) = sim
+            .substrate
+            .entities
+            .get_mut(id)
+            .and_then(|entity| entity.invulnerability.as_mut())
+        {
+            if new > 0 {
+                state.restart_ares(frame as i32, new);
+            } else {
+                state.stop();
             }
         }
     }

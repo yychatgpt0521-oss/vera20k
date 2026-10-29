@@ -1193,7 +1193,8 @@ pub(crate) fn superweapon_launch_cue(
         | K::NoEffect
         | K::GenericWarhead
         | K::UnitDelivery
-        | K::HunterSeeker => SuperWeaponLaunchCue::default(),
+        | K::HunterSeeker
+        | K::EMPulse => SuperWeaponLaunchCue::default(),
     }
 }
 

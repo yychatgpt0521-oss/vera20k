@@ -1743,6 +1743,14 @@ impl ProcessedRulesLayers {
         })
     }
 
+    pub(crate) fn em_pulse_states(
+        &self,
+    ) -> impl Iterator<Item = (&str, Option<&crate::rules::em_pulse::EmPulseSettings>)> {
+        self.member_states(RulesTypeFamily::SuperWeapon, |member| {
+            member.em_pulse.as_ref()
+        })
+    }
+
     pub(crate) fn unit_delivery_states(
         &self,
     ) -> impl Iterator<Item = (&str, Option<&UnitDeliveryRules>)> {
@@ -4313,6 +4321,8 @@ struct ProcessedType {
     unit_delivery: Option<UnitDeliveryRules>,
     #[serde(default)]
     hunter_seeker: Option<crate::rules::hunter_seeker::HunterSeekerSettings>,
+    #[serde(default)]
+    em_pulse: Option<crate::rules::em_pulse::EmPulseSettings>,
     /// ParticleType `Warhead=` (`0x00645043..0x00645067`): ReadString128,
     /// then WarheadType's factory (`0x0075E3B0`); an empty read keeps it.
     particle_warhead: Option<String>,
@@ -4797,6 +4807,7 @@ impl ProcessedType {
             super_weapon_aux_building: None,
             unit_delivery: None,
             hunter_seeker: None,
+            em_pulse: None,
             super_weapon_building_requirements: None,
             #[cfg(feature = "ares")]
             super_weapon_availability: AresSuperWeaponAvailability::default(),
@@ -6547,6 +6558,30 @@ impl RulesPassProcessor {
                         if let Some(buildings) = buildings {
                             settings.buildings = buildings;
                         }
+                    }
+                    // Ares Type=EMPulse (documented keys; Ares 3.0 is closed
+                    // source): EMPulse.Cannons replaces when reached, the
+                    // scalars retain on an unknown value, SW.MaxCount defaults 1.
+                    if kind.is_some_and(|kind| kind.eq_ignore_ascii_case("EMPulse"))
+                        || self.families[&RulesTypeFamily::SuperWeapon][index]
+                            .em_pulse
+                            .is_some()
+                    {
+                        let cannons = self.resolve_existing_list_from(
+                            &raw,
+                            "EMPulse.Cannons",
+                            RulesTypeFamily::Building,
+                            2048,
+                        );
+                        let settings = self.family_mut(RulesTypeFamily::SuperWeapon)[index]
+                            .em_pulse
+                            .get_or_insert_default();
+                        if let Some(cannons) = cannons {
+                            settings.cannons = cannons;
+                        }
+                        settings.target_self =
+                            raw.read_ares_bool("EMPulse.TargetSelf", settings.target_self);
+                        settings.max_count = raw.read_ares_int("SW.MaxCount", settings.max_count);
                     }
                     availability.read_shots_pass(&raw);
                     self.family_mut(RulesTypeFamily::SuperWeapon)[index]

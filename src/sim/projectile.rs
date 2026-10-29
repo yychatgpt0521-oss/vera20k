@@ -1410,6 +1410,10 @@ pub enum ProjectileDetonationReason {
     /// straight to `DetonateAtCoord` (`0x0070D782`): one detonation, without
     /// the BulletClass cluster loop and its draws.
     DeathWeapon,
+    /// Ares `WeaponTypeExt::DetonateAt` (EMPulse `TargetSelf`): a bullet
+    /// created, placed at its target's coordinate and detonated once,
+    /// without the cluster loop. Unlike a death weapon its Location is set.
+    PlacedBullet,
     /// A `NUKE` impact's wait ended: its anim is gone (`0x00466771`).
     AnimEnded,
 }

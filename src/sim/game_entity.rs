@@ -36,6 +36,8 @@ use crate::sim::world::ObjectLifecycle;
 mod attach_effect;
 mod distributed_fire;
 mod emp;
+#[cfg(feature = "ares")]
+pub(crate) use emp::capped_duration as ares_capped_duration;
 mod foot_air;
 mod pip_fill;
 #[cfg(feature = "ares")]

@@ -44,6 +44,8 @@ mod ares_target_policy_tests;
 mod ares_presentation;
 #[cfg(feature = "ares")]
 mod hunter_seeker;
+#[cfg(feature = "ares")]
+mod em_pulse;
 #[cfg(test)]
 mod hunter_seeker_tests;
 pub mod genetic_converter;
@@ -1417,6 +1419,10 @@ pub struct SuperWeaponView {
     /// The select hook's refusal of a press, if any.
     #[cfg(feature = "ares")]
     pub ares_refusal: Option<AresCameoRefusal>,
+    /// Ares `SW.ShowCameo=`: false keeps the cameo off the sidebar strip, but
+    /// only for an `SW.AutoFire=yes` type (Ares docs, superweapons/general).
+    #[cfg(feature = "ares")]
+    pub ares_show_cameo: bool,
 }
 
 impl SuperWeaponView {
@@ -1512,6 +1518,11 @@ pub fn superweapon_views_for_owner(
                 can_afford,
                 constraints_blocked,
             ),
+            #[cfg(feature = "ares")]
+            ares_show_cameo: sw_type.sw_show_cameo
+                || !rules
+                    .super_weapon_metadata(type_id_str)
+                    .is_some_and(|metadata| metadata.targeting().auto_fire()),
         });
     }
     views
