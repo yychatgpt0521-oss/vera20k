@@ -339,6 +339,11 @@ pub struct AnimTypeRuntimeConfig {
     /// Raw `MakeInfantry=` index. Native defaults to -1 and treats every
     /// other value as enabling the AnimClass cell-occupation lifecycle.
     pub make_infantry: i32,
+    /// Ares `MakeInfantryOwner=` (AnimTypeExt+8, constructor 1000A452
+    /// Invoker; reader 1000A4DA): the house SetMakeInfOwner (1000A5F0) gives
+    /// an InfDeathAnim animation.
+    #[cfg(feature = "ares")]
+    pub(crate) make_infantry_owner: crate::rules::ares_warhead::HouseSelector,
     pub bouncer: bool,
     pub spawns: Option<String>,
     pub spawn_count: i32,
@@ -758,6 +763,9 @@ fn parse_anim_runtime_config(section: &IniSection) -> AnimTypeRuntimeConfig {
         // [`ArtRegistry::apply_anim_type_references`].
         tiberium_spawn_type: None,
         make_infantry: section.read_int("MakeInfantry", -1),
+        #[cfg(feature = "ares")]
+        make_infantry_owner: crate::rules::ares_warhead::HouseSelector::Invoker
+            .read(section, "MakeInfantryOwner"),
         bouncer: section.read_bool("Bouncer", false),
         spawns: None,
         spawn_count: section.read_int("SpawnCount", 0),

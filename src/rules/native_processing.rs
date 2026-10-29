@@ -7725,6 +7725,15 @@ impl RulesPassProcessor {
                             RulesTypeFamily::Animation,
                         )
                     });
+                let inf_death_anim = pass
+                    .section(&self.families[&RulesTypeFamily::Warhead][index].native_stored_id)
+                    .and_then(|raw| {
+                        self.resolve_existing_type_from(
+                            raw,
+                            "InfDeathAnim",
+                            RulesTypeFamily::Animation,
+                        )
+                    });
                 let member = &mut self
                     .families
                     .get_mut(&RulesTypeFamily::Warhead)
@@ -7735,7 +7744,7 @@ impl RulesPassProcessor {
                         .ares_warhead
                         .as_mut()
                         .expect("WH Ares extension")
-                        .read_pass(section, sparkle, animation);
+                        .read_pass(section, sparkle, animation, inf_death_anim);
                 }
                 member
                     .ares_verses

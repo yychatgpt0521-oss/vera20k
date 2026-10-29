@@ -29,6 +29,11 @@ pub(crate) struct AresWarheadRules {
     iron_curtain_duration: i32,
     #[serde(default = "default_iron_curtain_cap")]
     iron_curtain_cap: i32,
+    /// Ares `InfDeathAnim=` (WarheadExt+4C, constructor null; read at
+    /// 10052040 through Valueable<AnimTypeClass*>, Find without allocation).
+    #[cfg(feature = "ares")]
+    #[serde(default)]
+    inf_death_anim: Option<String>,
 }
 impl Default for AresWarheadRules {
     fn default() -> Self {
@@ -47,6 +52,8 @@ impl Default for AresWarheadRules {
             effects_require_verses: true,
             iron_curtain_duration: 0,
             iron_curtain_cap: -1,
+            #[cfg(feature = "ares")]
+            inf_death_anim: None,
         }
     }
 }
@@ -100,6 +107,12 @@ impl AresWarheadRules {
     pub(crate) fn kill_driver(&self) -> &KillDriverRules {
         &self.kill_driver
     }
+    /// The animation a non-`NotHuman=` infantryman killed by this warhead
+    /// plays instead of its InfDeath arm.
+    #[cfg(feature = "ares")]
+    pub(crate) fn inf_death_anim(&self) -> Option<&str> {
+        self.inf_death_anim.as_deref()
+    }
     #[cfg(feature = "ares")]
     pub(crate) fn effects_require_damage(&self) -> bool {
         self.effects_require_damage
@@ -114,6 +127,7 @@ impl AresWarheadRules {
         section: &IniSection,
         sparkle: Option<Option<String>>,
         animation: Option<Option<String>>,
+        inf_death_anim: Option<Option<String>>,
     ) {
         self.duration = section.read_ares_int("EMP.Duration", self.duration);
         self.cap = section.read_ares_int("EMP.Cap", self.cap);
@@ -122,6 +136,9 @@ impl AresWarheadRules {
         self.iron_curtain_cap = section.read_ares_int("IronCurtain.Cap", self.iron_curtain_cap);
         if let Some(sparkle) = sparkle {
             self.sparkles = sparkle;
+        }
+        if let Some(anim) = inf_death_anim {
+            self.inf_death_anim = anim;
         }
         self.affects_enemies = section.read_ares_bool("AffectsEnemies", self.affects_enemies);
         self.affects_owner = section.read_ares_nullable_bool("AffectsOwner", self.affects_owner);
@@ -158,7 +175,7 @@ pub(crate) enum HouseSelector {
 #[cfg(feature = "ares")]
 impl HouseSelector {
     #[cfg(feature = "ares")]
-    fn read(self, section: &IniSection, key: &str) -> Self {
+    pub(crate) fn read(self, section: &IniSection, key: &str) -> Self {
         const VALUES: [(&str, HouseSelector); 8] = [
             ("default", HouseSelector::Default),
             ("invoker", HouseSelector::Invoker),

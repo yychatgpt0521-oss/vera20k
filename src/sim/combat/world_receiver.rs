@@ -2395,9 +2395,16 @@ fn finish_concrete_death(
                     .rfind(|event| event.target_id == dead_id)
                     .and_then(|event| event.source_house)
             });
+        #[cfg(feature = "ares")]
+        let inf_death_anim = killing_warhead
+            .as_ref()
+            .and_then(|(wh, _)| wh.ares_rules()?.inf_death_anim());
+        #[cfg(not(feature = "ares"))]
+        let inf_death_anim = None;
         let postlude = world.begin_infantry_receiver_death(
             dead_id,
             inf_death,
+            inf_death_anim,
             anim_house,
             rules,
             overlay_registry,

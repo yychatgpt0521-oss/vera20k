@@ -132,6 +132,11 @@ pub enum DeathAnimFollowUp {
     /// takes its scheme 0; a restored VERA anim keeps the owner's. Retail's
     /// only such anim, CANY04DM, has no 16..31 pixels and draws at full light.
     Remap(crate::sim::anim_class::AnimRemap),
+    /// Ares SetMakeInfOwner (`0x1000A5F0`): the selected house is written
+    /// straight to the anim's owner (`+0x180`), and a `MakeInfantry=` anim
+    /// (`+0x34C` >= 0) also takes its colour scheme as remap (`+0xD4`).
+    #[cfg(feature = "ares")]
+    AresOwner { house: InternedId, remap: bool },
 }
 
 impl Simulation {
@@ -249,6 +254,13 @@ impl Simulation {
             }
             Some(DeathAnimFollowUp::Remap(remap)) => {
                 self.substrate.anims.set_anim_remap(anim, remap);
+            }
+            #[cfg(feature = "ares")]
+            Some(DeathAnimFollowUp::AresOwner { house, remap }) => {
+                self.substrate.set_anim_owner_house(anim, house);
+                if remap {
+                    self.substrate.anims.set_anim_house_remap(anim, house);
+                }
             }
         }
         Some(anim)

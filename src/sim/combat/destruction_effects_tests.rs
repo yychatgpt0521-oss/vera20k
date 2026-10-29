@@ -740,6 +740,69 @@ fn infantry_death_anims_are_built_inline_and_the_virus_takes_the_killers_house()
     assert_eq!(owners(&sim), vec![Some("Russians".to_string())]);
 }
 
+/// Ares `InfDeathAnim=` (hook 0x5185C8 -> 0x10025DE0): the killing warhead's
+/// anim replaces its InfDeath arm (here Die2, which would leave a corpse), and
+/// SetMakeInfOwner (0x1000A5F0) gives it the killer's house by default and the
+/// victim's for `MakeInfantryOwner=victim`.
+#[cfg(feature = "ares")]
+#[test]
+fn an_ares_inf_death_anim_replaces_the_inf_death_arm_and_takes_its_owner() {
+    let verses = "Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%";
+    let text = RULES.replace("1=Super\n", "1=Super\n2=DIEWH\n3=OWNWH\n")
+        + &format!(
+            "[Animations]\n0=DIEANIM\n1=OWNANIM\n\
+             [DIEWH]\n{verses}\nInfDeath=2\nInfDeathAnim=DIEANIM\n\
+             [OWNWH]\n{verses}\nInfDeath=2\nInfDeathAnim=OWNANIM\n"
+        );
+    let art_text = format!("{ART}[DIEANIM]\nEnd=10\n[OWNANIM]\nEnd=10\nMakeInfantryOwner=victim\n");
+    let mut rules = RuleSet::from_ini_with_fixed_art_for_test(
+        &IniFile::from_str(&text),
+        &IniFile::from_str(&art_text),
+    )
+    .expect("InfDeathAnim rules");
+    let mut art = crate::rules::art_data::ArtRegistry::from_ini(&IniFile::from_str(&art_text));
+    for name in ["DIEANIM", "OWNANIM"] {
+        art.bind_anim_frame_count_for_test(name, 10);
+    }
+    rules.install_art_fixture(art);
+
+    for (warhead, anim, owner) in [
+        ("DIEWH", "DIEANIM", "Russians"),
+        ("OWNWH", "OWNANIM", "Americans"),
+    ] {
+        let mut sim = sim(5);
+        let russians = sim.interner.intern("Russians");
+        sim.houses
+            .register(HouseState::new(russians, 1, None, false, 0, 10));
+        let victim = spawn(&mut sim, &rules, "E1", 12, 12);
+        let killer = sim
+            .spawn_object_at_height("E1", "Russians", 14, 12, 0, 0, &rules)
+            .unwrap();
+        kill_with(&mut sim, &rules, victim, warhead, killer, None);
+        let built: Vec<(String, Option<String>)> = sim
+            .substrate
+            .anims
+            .iter()
+            .map(|(_, built)| {
+                (
+                    sim.interner.resolve(built.type_id()).to_string(),
+                    built
+                        .owner_house()
+                        .map(|house| sim.interner.resolve(house).to_string()),
+                )
+            })
+            .collect();
+        assert_eq!(built, vec![(anim.to_string(), Some(owner.to_string()))]);
+        assert!(
+            sim.substrate
+                .entities
+                .get(victim)
+                .is_none_or(|object| !object.lifecycle.object_alive()),
+            "{warhead}: UnInit at once, no Die2 corpse"
+        );
+    }
+}
+
 /// Through the production receiver: a killed vehicle plays its own
 /// `Explosion=` and then its `DestroyAnim=` as live anims, and a killed
 /// building one explosion per foundation cell before its DestroyAnim, all

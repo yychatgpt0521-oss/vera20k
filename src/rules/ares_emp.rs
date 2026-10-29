@@ -142,7 +142,7 @@ mod tests {
                 );
             } else {
                 let mut config = crate::rules::ares_warhead::AresWarheadRules::default();
-                config.read_pass(section, None, None);
+                config.read_pass(section, None, None, None);
                 if kind == "enemies" {
                     assert_eq!(
                         config.affects_enemies(),
