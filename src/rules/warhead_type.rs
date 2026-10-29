@@ -339,6 +339,26 @@ pub struct WarheadType {
     /// -> warhead `+0x1C4`. Native RAISES this to `min_debris` when it is
     /// lower (`0x0075DAE0`); it never lowers `min_debris` to meet it.
     pub max_debris: i32,
+    /// Phobos `WarheadTypeExt::AllowDamageOnSelf` (`Nullable<bool>`): this
+    /// warhead may deal damage and damage-adjacent effects to the object that
+    /// fired it even when that object's type keeps `DamageSelf=no`.
+    /// `Explosion_Damage_DamageSelf @ 0x004896EC` skips the area-list source
+    /// exclusion, `BuildingClass_ReceiveDamage_DamageSelf @ 0x0044224F` skips
+    /// the building wrapper's self return, and
+    /// `MapClass_DamageArea_AirDamageSelfFix @ 0x00489416` applies the same
+    /// rule to the airborne phase. `None` falls back to
+    /// [`crate::rules::ruleset::RuleSet::allow_damage_on_self_for`]'s
+    /// `[General] AllowDamageOnSelf` value.
+    #[cfg(feature = "phobos")]
+    allow_damage_on_self: Option<bool>,
+    /// Phobos `WarheadTypeExt::DecloakDamagedTargets` (`Nullable<bool>`): a
+    /// surviving object this warhead damages calls native
+    /// `StartUncloaking(0)` (`TechnoClass::ReceiveDamage @ 0x0070281D`) only
+    /// when this is true. `None` falls back to
+    /// [`crate::rules::ruleset::RuleSet::decloak_damaged_targets_for`]'s
+    /// `[General] DecloakDamagedTargets` value.
+    #[cfg(feature = "phobos")]
+    decloak_damaged_targets: Option<bool>,
     /// Phobos warhead shield overrides (`Shield.Penetrate`,
     /// `Shield.AffectTypes`, `Shield.Penetrate.Types`, absorb/pass and
     /// received-damage bounds). Phobos `WarheadTypeExt` reads them after the
@@ -398,6 +418,20 @@ impl WarheadType {
 
     pub(crate) fn ares_verses_hash_state(&self) -> Option<&AresWarheadVerses> {
         self.ares_verses.as_ref()
+    }
+
+    /// Phobos `AllowDamageOnSelf`: `Some` is the authored per-warhead value;
+    /// `None` falls back to the `[General]` global.
+    #[cfg(feature = "phobos")]
+    pub fn allow_damage_on_self(&self) -> Option<bool> {
+        self.allow_damage_on_self
+    }
+
+    /// Phobos `DecloakDamagedTargets`: `Some` is the authored per-warhead
+    /// value; `None` falls back to the `[General]` global.
+    #[cfg(feature = "phobos")]
+    pub fn decloak_damaged_targets(&self) -> Option<bool> {
+        self.decloak_damaged_targets
     }
 
     /// Parse a WarheadType from a rules.ini section.
@@ -509,6 +543,11 @@ impl WarheadType {
             debris_maximums,
             min_debris,
             max_debris,
+            #[cfg(feature = "phobos")]
+            allow_damage_on_self: section.read_phobos_nullable_bool("AllowDamageOnSelf", None),
+            #[cfg(feature = "phobos")]
+            decloak_damaged_targets: section
+                .read_phobos_nullable_bool("DecloakDamagedTargets", None),
             #[cfg(feature = "phobos")]
             shield: crate::rules::phobos_shields::ShieldWarheadRules::from_section(section),
         }
@@ -729,5 +768,61 @@ MaxDebris=2
         assert_eq!((neg.min_debris, neg.max_debris), (0, 2));
         let inv = WarheadType::from_ini_section("Inverted", ini.section("Inverted").unwrap());
         assert_eq!((inv.min_debris, inv.max_debris), (7, 7));
+    }
+
+    /// The `[General] AllowDamageOnSelf` fallback and per-warhead override
+    /// that Phobos `WarheadTypeExt::AllowDamageOnSelf.Get(...)` applies.
+    #[cfg(feature = "phobos")]
+    #[test]
+    fn allow_damage_on_self_falls_back_to_general() {
+        let read = |text: &str, warhead: &str| {
+            let rules = crate::rules::ruleset::RuleSet::from_ini(&IniFile::from_str(text)).unwrap();
+            rules.allow_damage_on_self_for(rules.warhead(warhead).unwrap())
+        };
+        let with_global = "[General]\nAllowDamageOnSelf=yes\n\
+             [Warheads]\n0=Unset\n1=Off\n2=On\n\
+             [Unset]\nFixtureOnly=1\n[Off]\nAllowDamageOnSelf=no\n[On]\nAllowDamageOnSelf=yes\n";
+        assert!(
+            read(with_global, "Unset"),
+            "global yes reaches an unset warhead"
+        );
+        assert!(
+            !read(with_global, "Off"),
+            "per-warhead no overrides global yes"
+        );
+        assert!(read(with_global, "On"), "per-warhead yes overrides global");
+
+        let no_global =
+            "[Warheads]\n0=Unset\n1=On\n[Unset]\nFixtureOnly=1\n[On]\nAllowDamageOnSelf=yes\n";
+        assert!(!read(no_global, "Unset"), "absent global defaults to no");
+        assert!(read(no_global, "On"));
+    }
+
+    /// The `[General] DecloakDamagedTargets` fallback (default yes) and the
+    /// per-warhead override that Phobos
+    /// `WarheadTypeExt::DecloakDamagedTargets.Get(...)` applies.
+    #[cfg(feature = "phobos")]
+    #[test]
+    fn decloak_damaged_targets_falls_back_to_general() {
+        let read = |text: &str, warhead: &str| {
+            let rules = crate::rules::ruleset::RuleSet::from_ini(&IniFile::from_str(text)).unwrap();
+            rules.decloak_damaged_targets_for(rules.warhead(warhead).unwrap())
+        };
+        let no_global =
+            "[Warheads]\n0=Unset\n1=Off\n[Unset]\nFixtureOnly=1\n[Off]\nDecloakDamagedTargets=no\n";
+        assert!(read(no_global, "Unset"), "absent global defaults to yes");
+        assert!(!read(no_global, "Off"), "per-warhead no overrides");
+
+        let with_global = "[General]\nDecloakDamagedTargets=no\n\
+             [Warheads]\n0=Unset\n1=On\n\
+             [Unset]\nFixtureOnly=1\n[On]\nDecloakDamagedTargets=yes\n";
+        assert!(
+            !read(with_global, "Unset"),
+            "global no reaches an unset warhead"
+        );
+        assert!(
+            read(with_global, "On"),
+            "per-warhead yes overrides global no"
+        );
     }
 }

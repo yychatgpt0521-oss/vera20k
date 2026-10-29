@@ -439,7 +439,10 @@ impl ScenarioElapsedClock {
     }
 
     /// Sample the retail raw accumulator without changing clock state.
-    #[cfg(test)]
+    #[cfg(any(
+        test,
+        all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")
+    ))]
     fn elapsed_buckets(&self, now_ms: u64) -> u32 {
         self.accumulated_buckets
             .wrapping_add(if self.start_bucket != ELAPSED_CLOCK_STOPPED {
@@ -452,7 +455,11 @@ impl ScenarioElapsedClock {
     /// gamemd provenance: Score elapsed-time formatting; verified
     /// ScoreDialog__WndProc @ 0x005C9B10 reads ScenarioClass+0x614/+0x61C,
     /// treats the wrapped accumulator as signed, and divides it by 60.
-    #[cfg(test)]
+    /// The browser match report reads it after abort/outcome stopped the clock.
+    #[cfg(any(
+        test,
+        all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")
+    ))]
     pub(crate) fn elapsed_seconds(&self, now_ms: u64) -> i32 {
         (self.elapsed_buckets(now_ms) as i32) / SCORE_BUCKETS_PER_SECOND
     }
@@ -1091,6 +1098,8 @@ mod tests {
 
         clock.resume(1_070 << 4);
         assert_eq!(clock.stop(1_130 << 4), 2);
+        // A stopped clock (abort/outcome) still reports its accumulated time.
+        assert_eq!(clock.elapsed_seconds(5_000 << 4), 2);
     }
 
     #[test]

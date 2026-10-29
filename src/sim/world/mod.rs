@@ -52,6 +52,8 @@ pub use frame_effects::{FrameEffects, LocalPlanningBoundary, NetworkCommandBound
 pub(crate) use type_tech_levels::TypeTechLevels;
 #[cfg(test)]
 mod unit_unlimbo_tests;
+#[cfg(test)]
+mod unit_follows_tests;
 pub(crate) use sinking::{LivingSinkTrigger, SinkingState};
 pub mod edge_cell;
 mod gap_generator;
@@ -452,13 +454,14 @@ pub struct SimFrameOutput {
     /// retained screen offset and applies these after Logic.
     pub screen_shake_updates: Vec<crate::sim::combat::ScreenShakeUpdate>,
     pub lighting_events: Vec<crate::sim::light_sources::LightingEvent>,
-    /// The retail sync checksum this frame's multiplayer `Queue_AI` computed
-    /// for the native history ring; `None` on single-player routes and on
+    /// The sync checksum this frame's multiplayer `Queue_AI` computed for
+    /// the native history ring (retail fold plus VERA's money, health and
+    /// trigger terms); `None` on single-player routes and on
     /// frames that terminated before the tail.
     pub multiplayer_checksum: Option<FrameSyncChecksum>,
 }
 
-/// One frame's retail multiplayer checksum, stamped with the pre-commit
+/// One frame's multiplayer sync checksum, stamped with the pre-commit
 /// native frame it describes (`Frame` when `0x00647684` runs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameSyncChecksum {
@@ -6095,6 +6098,82 @@ impl Simulation {
         registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
         effects: FrameEffects<'_>,
     ) {
+        let Some(entity) = self.substrate.entities.get(stable_id) else {
+            return;
+        };
+        if entity.category() != EntityCategory::Unit {
+            self.change_owner_inherited(stable_id, new_owner, rules, registry, effects);
+            return;
+        }
+        // UnitClass::ChangeOwner7463A0..7463F2 (original gamemd instructions)
+        // clears its independent follower byte, recursively transfers its
+        // retained peer first, restores that link/peer byte, then calls Foot.
+        // An explicit continuation stack preserves this order for long chains
+        // without consuming one Rust stack frame per linked Unit.
+        let mut pending = Vec::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut current = Some(stable_id);
+        while let Some(id) = current {
+            let Some(entity) = self.substrate.entities.get(id) else {
+                log::warn!("UnitChangeOwner7463A0 references missing follower {id}");
+                return;
+            };
+            if entity.category() != EntityCategory::Unit {
+                log::warn!("UnitChangeOwner7463A0 references non-Unit follower {id}");
+                return;
+            }
+            if entity.owner() == new_owner {
+                break;
+            }
+            if !visited.insert(id) {
+                // Native recursion has no completed result for this graph.
+                // Retain it in storage, but diagnose this unsupported call.
+                log::warn!("UnitChangeOwner7463A0 has a cyclic follower chain at {id}");
+                return;
+            }
+            current = entity.unit_follower();
+            pending.push((id, current));
+            self.substrate
+                .entities
+                .get_mut(id)
+                .unwrap()
+                .set_is_unit_follower(false);
+        }
+        for (id, peer) in pending.into_iter().rev() {
+            if !self.substrate.entities.contains(id)
+                || peer.is_some_and(|peer| !self.substrate.entities.contains(peer))
+            {
+                // A native retained pointer would now be dangling. Do not
+                // resurrect a retired object or invent its callback result.
+                log::warn!("UnitChangeOwner7463A0 receiver/follower retired during callbacks");
+                return;
+            }
+            if let Some(peer) = peer {
+                self.substrate
+                    .entities
+                    .get_mut(id)
+                    .unwrap()
+                    .set_unit_follower(Some(peer));
+                self.substrate
+                    .entities
+                    .get_mut(peer)
+                    .unwrap()
+                    .set_is_unit_follower(true);
+            }
+            self.change_owner_inherited(id, new_owner, rules, registry, effects);
+        }
+    }
+
+    /// The existing inherited and Building ownership authority. Unit's
+    /// subclass prefix enters here only after its follower callbacks finish.
+    fn change_owner_inherited(
+        &mut self,
+        stable_id: u64,
+        new_owner: InternedId,
+        rules: &RuleSet,
+        registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+        effects: FrameEffects<'_>,
+    ) {
         let Some((old_owner, category, has_spawn_manager, build_const_eligible)) =
             self.substrate.entities.get(stable_id).map(|entity| {
                 (
@@ -6107,11 +6186,6 @@ impl Simulation {
         else {
             return;
         };
-        // UnitChangeOwner7463A8..7463AE refuses the same house before its
-        // Foot delegate. Infantry/Aircraft inherit Foot's failure receiver.
-        if category == EntityCategory::Unit && old_owner == new_owner {
-            return;
-        }
         // FootChangeOwner4DBEFB removes at the current cell before its
         // Techno delegate, including the same-owner refusal at7014A0.
         self.remove_unit_sensors_at_current(stable_id, rules, registry);
@@ -7194,13 +7268,27 @@ impl Simulation {
     /// AssignOrphanedCellZone (`0x0056D460`) and the local graph update
     /// (`0x00584550`): the per-cell tail `TerrainClass::Limbo` and
     /// `BuildingClass::AfterDestruction` share. `blocked` is the structure
-    /// presence already scanned for the caller's cells.
-    fn publish_cell_and_assign_orphaned_zone(
+    /// presence already scanned for the caller's cells, or calculated here for
+    /// a single native caller such as Anim::Start424EE8/424EF3.
+    pub(crate) fn publish_cell_and_assign_orphaned_zone(
         &mut self,
         rules: &RuleSet,
         cell: (u16, u16),
-        blocked: &BTreeSet<(u16, u16)>,
+        blocked: Option<&BTreeSet<(u16, u16)>>,
     ) {
+        let owned_blocked;
+        let blocked = match blocked {
+            Some(blocked) => blocked,
+            None => {
+                owned_blocked = navigation::structure_blocked_among(
+                    &self.substrate.entities,
+                    &self.interner,
+                    rules,
+                    &[cell],
+                );
+                &owned_blocked
+            }
+        };
         self.publish_recalculated_cells_with_presence(rules, &[cell], blocked);
         if let (Some(terrain), Some(path)) =
             (self.resolved_terrain.as_ref(), self.path_grid.as_deref())

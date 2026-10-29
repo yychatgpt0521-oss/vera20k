@@ -148,6 +148,9 @@ pub const NPATCH_ENABLED: bool = cfg!(feature = "npatch");
 /// Whether this binary includes VERA20K's own extension behaviors. INIs cannot
 /// change it; builds without the feature keep every stock path.
 pub const VERAX_ENABLED: bool = cfg!(feature = "verax");
+/// Whether this binary includes the NPBUG bug-fix extension. INIs cannot
+/// change it; builds without the feature keep every native path.
+pub const NPBUG_ENABLED: bool = cfg!(feature = "npbug");
 pub(crate) mod ares_prerequisites;
 #[cfg(feature = "ares")]
 pub mod ares_mouse_cursors;

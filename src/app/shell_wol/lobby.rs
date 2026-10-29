@@ -303,20 +303,6 @@ impl WolLobby {
         self.lobbies = channels;
     }
 
-    /// The lobby list's rows. The modern lobby lists its one lobby beside
-    /// that lobby's users: the joined row counts them, not the listing from
-    /// before the join, which the 53 s timer refreshes.
-    fn lobby_rows(&self) -> Vec<WolLobbyRow> {
-        let mut rows = lobby_rows(&self.lobbies);
-        if self.ui.is_modern() && !self.members.is_empty() {
-            let current = self.current.as_ref().map(|channel| &channel.name);
-            for row in rows.iter_mut().filter(|row| current == Some(&row.name)) {
-                row.users = i32::try_from(self.members.len()).unwrap_or(i32::MAX);
-            }
-        }
-        rows
-    }
-
     /// `[0xB76B10] == 0`: the current channel record's kind is 0, or no
     /// channel is current.
     fn chat_kind_current(&self) -> bool {
@@ -1225,7 +1211,7 @@ fn refill_lobbies(state: &mut AppState) {
         return;
     };
     let current = lobby.current.as_ref().map(|channel| channel.name.clone());
-    let rows = lobby.lobby_rows();
+    let rows = lobby_rows(&lobby.lobbies);
     lobby.ui.replace_lobbies(rows, current.as_deref());
 }
 
@@ -1416,7 +1402,7 @@ fn send_join(state: &mut AppState, channel: WolChannel, key: String, game: bool,
 /// `Lob_41_<n>` name as `TXT_JOINED_S` shows it, else the raw name; not in
 /// Quick Match), then the channel record and its users cleared. The line
 /// reaches the lobby's transcript under any wait box (`0x005E2700` walks
-/// the dialog stack).
+/// the dialog stack). The modern lobby never names its one chat lobby.
 fn left_channel(state: &mut AppState) {
     let Some(current) = lobby_mut(state).and_then(|lobby| {
         lobby.members.clear();
@@ -1432,6 +1418,7 @@ fn left_channel(state: &mut AppState) {
         return;
     }
     let room = match current.lobby_number() {
+        Some(_) if modern_lobby(state) => return,
         Some(number) => WolLobbyRow::joined_name(number, &base_names(state)),
         None => current.name,
     };
@@ -1440,6 +1427,10 @@ fn left_channel(state: &mut AppState) {
         &[crate::assets::csf_file::CsfArg::Str(&room)],
     );
     message_line(state, text);
+}
+
+fn modern_lobby(state: &AppState) -> bool {
+    lobby(state).is_some_and(|lobby| lobby.ui.is_modern())
 }
 
 /// `0x00785740` for this user while C2/C9 is up: its `TXT_YOULEFT` goes to
@@ -2430,8 +2421,9 @@ fn joined(state: &mut AppState, result: Result<WolJoined, u32>) {
         return;
     }
     // A chat lobby: its number (0x7A5EFD, any type-0 name), the
-    // TXT_JOINED_S line, the controls back with Join as the selected game
-    // admits for either role.
+    // TXT_JOINED_S line (not in the modern lobby, which never names its one
+    // chat lobby), the controls back with Join as the selected game admits
+    // for either role.
     state.frontend.wol_lobby_globals.lobby_number = joined.channel.joined_lobby_number();
     if quick_match_runner(state) {
         // 0x7A5E86..0x7A5EC8: no TXT_JOINED_S in modes 1-3; the wait closes
@@ -2440,16 +2432,17 @@ fn joined(state: &mut AppState, result: Result<WolJoined, u32>) {
         super::quick_match::lobby_users_listed(state);
         return;
     }
-    let number = joined.channel.lobby_number();
-    let name = match number {
-        Some(number) => WolLobbyRow::joined_name(number, &base_names(state)),
-        None => joined.channel.name.clone(),
-    };
-    let text = crate::assets::csf_file::format_csf(
-        &csf(state, "TXT_JOINED_S"),
-        &[crate::assets::csf_file::CsfArg::Str(&name)],
-    );
-    message_line(state, text);
+    if !modern_lobby(state) {
+        let name = match joined.channel.lobby_number() {
+            Some(number) => WolLobbyRow::joined_name(number, &base_names(state)),
+            None => joined.channel.name.clone(),
+        };
+        let text = crate::assets::csf_file::format_csf(
+            &csf(state, "TXT_JOINED_S"),
+            &[crate::assets::csf_file::CsfArg::Str(&name)],
+        );
+        message_line(state, text);
+    }
     let selected = lobby(state).and_then(|lobby| lobby.ui.game_list.selected);
     let join = selected.is_some_and(|row| {
         admit_row(state, row, false, false) || admit_row(state, row, true, false)
@@ -2826,21 +2819,15 @@ fn sender(member: &WolMember) -> wol_chat::WolSender<'_> {
 /// up. The local record is found by the login nickname
 /// (`[0xB73E40]`) among the channel's users.
 fn sender_passes(state: &AppState, from: &WolMember, text: &[u16]) -> bool {
-    let preferences = &state.frontend.wol_preferences;
-    let filters = wol_chat::WolDisplayFilters {
-        latin: preferences.display_latin != 0,
-        asian: preferences.display_asian != 0,
-        buddies: preferences.display_buddies,
-        clan: preferences.display_clan,
-    };
+    let visit = state.frontend.wol.as_ref();
+    let filters = wol_chat::WolDisplayFilters::new(
+        &state.frontend.wol_preferences,
+        visit.is_some_and(|visit| visit.modern_ui()),
+    );
     let sender = sender(from);
     let setup_open = state.frontend.shell_route.network_setup();
     let local = nickname(state);
-    let in_game = state
-        .frontend
-        .wol
-        .as_ref()
-        .is_none_or(|visit| visit.in_game);
+    let in_game = visit.is_none_or(|visit| visit.in_game);
     let lobby = lobby_dialog(state).filter(|_| !in_game);
     let local_clan = lobby
         .and_then(|lobby| {
@@ -3981,28 +3968,6 @@ mod tests {
         legacy.set_lobbies(channels);
         assert_eq!(legacy.lobbies.len(), 3);
         assert_eq!(legacy.ui.page_spec().stacked.len(), 8);
-    }
-
-    /// The modern lobby's row counts the users the player list beside it
-    /// shows; the retail list keeps the count from the last listing.
-    #[test]
-    fn modern_lobby_row_counts_the_joined_lobbys_users() {
-        let bunker = WolChannel {
-            name: PUBLIC_LOBBY_NAME.into(),
-            ..Default::default()
-        };
-        for (modern, users) in [(true, 2), (false, 0)] {
-            let mut lobby = new_runner(Runner::Lobby, false, false, Instant::now(), modern);
-            lobby.set_lobbies(vec![bunker.clone()]);
-            lobby.current = Some(bunker.clone());
-            lobby.members = ["Tanya", "Boris"]
-                .map(|name| WolMember {
-                    name: name.into(),
-                    ..Default::default()
-                })
-                .into();
-            assert_eq!(lobby.lobby_rows()[0].users, users);
-        }
     }
 
     fn user(name: &str, flags: u32) -> WolMember {

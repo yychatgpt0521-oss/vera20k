@@ -199,6 +199,16 @@ pub struct GameEntity {
     /// LimboLaunch has removed this Unit from Logic; Unlimbo preserves it.
     #[serde(default)]
     pub unit_firing_counter: crate::sim::animation::UnitFiringCounter,
+    /// UnitClass+6C8. The constructor clears this next-Unit reference at
+    /// 7353EC; the map reader74368C, ChangeOwner7463A0 and Find_Path4D3920
+    /// share it (original gamemd.exe instructions). Not yet ported: the
+    /// Accelerates speed hand-off in Process_Drive_Track 4B1218 / Ship 6A08F0
+    /// and the IsTrain-gated Stop_Moving/track consumers (no retail IsTrain).
+    unit_follower: Option<u64>,
+    /// UnitClass+6D0, constructed false at7353F8. This retained byte is
+    /// independent of incoming links: PointerExpired7446E0 clears only the
+    /// reference, and ChangeOwner7463A0 writes the byte separately (gamemd).
+    is_unit_follower: bool,
     /// The owning house (`TechnoClass+0x21C`), interned.
     /// `TechnoClass::ChangeOwner @ 0x007014A0` moves it; here only the store's
     /// owner-change path does ([`Self::set_owner_from_store`]).
@@ -1572,6 +1582,28 @@ impl GameEntity {
         self.object_group = group;
     }
 
+    /// UnitClass+6C8, the next Unit in the authored FOLLOWS chain.
+    pub(crate) const fn unit_follower(&self) -> Option<u64> {
+        self.unit_follower
+    }
+
+    /// UnitClass+6D0; this is saved state, not a derived incoming-link count.
+    pub(crate) const fn is_unit_follower(&self) -> bool {
+        self.is_unit_follower
+    }
+
+    /// The map/owner/expiry callers own admission and ordering. In particular,
+    /// changing this reference does not change either Unit's follower byte.
+    pub(crate) fn set_unit_follower(&mut self, follower: Option<u64>) {
+        assert_eq!(self.category, EntityCategory::Unit);
+        self.unit_follower = follower;
+    }
+
+    pub(crate) fn set_is_unit_follower(&mut self, is_follower: bool) {
+        assert_eq!(self.category, EntityCategory::Unit);
+        self.is_unit_follower = is_follower;
+    }
+
     pub(crate) const fn production_start_price(&self) -> i32 {
         self.production_start_price
     }
@@ -1851,6 +1883,8 @@ impl GameEntity {
             barrel_elevation: crate::sim::movement::FacingClass::new(0, BARREL_ELEVATION_ROT),
             body_frame_counter: Default::default(),
             unit_firing_counter: Default::default(),
+            unit_follower: None,
+            is_unit_follower: false,
             owner,
             initial_owner: owner,
             #[cfg(feature = "ares")]

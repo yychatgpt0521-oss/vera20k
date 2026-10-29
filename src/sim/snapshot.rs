@@ -371,6 +371,11 @@ pub enum SnapshotRestoreError {
         object_id: u64,
         reason: &'static str,
     },
+    #[error("entity {object_id} has invalid Unit follower state: {reason}")]
+    InvalidUnitFollowerState {
+        object_id: u64,
+        reason: &'static str,
+    },
     #[error("invalid saved planning graph: {reason}")]
     InvalidPlanningReferences { reason: &'static str },
     #[error("non-Building entity {owner_id} retains animation slot {slot}")]
@@ -1162,6 +1167,35 @@ fn restore_object_references(
     // complete modeled pointer graph before mutating even weak references or
     // derived caches, so a failed restore remains an atomic rejection.
     for (entity_id, entity) in sim.substrate.entities.iter_sorted() {
+        // UnitClass::Load744470 queues +6C8 for swizzling (gamemd.exe).
+        // Preserve the independent +6D0 byte, cycles and physically present
+        // dead/limbo Units; only class identity and reference resolution apply.
+        if (entity.unit_follower().is_some() || entity.is_unit_follower())
+            && entity.category() != crate::map::entities::EntityCategory::Unit
+        {
+            return Err(SnapshotRestoreError::InvalidUnitFollowerState {
+                object_id: entity_id,
+                reason: "the relationship and follower byte belong to a Unit",
+            });
+        }
+        if let Some(follower_id) = entity.unit_follower() {
+            require_resolved_reference(
+                entity_ids.contains(&follower_id),
+                "EntityStore",
+                entity_id,
+                "unit_follower",
+                "EntityStore",
+                follower_id,
+            )?;
+            if sim.substrate.entities.get(follower_id).unwrap().category()
+                != crate::map::entities::EntityCategory::Unit
+            {
+                return Err(SnapshotRestoreError::InvalidUnitFollowerState {
+                    object_id: entity_id,
+                    reason: "the follower reference must name a Unit",
+                });
+            }
+        }
         if let Some(anim_id) = entity
             .parasite
             .class()
@@ -3474,6 +3508,7 @@ mod tests {
             !crate::rules::PHOBOS_ENABLED,
             !crate::rules::NPATCH_ENABLED,
             !crate::rules::VERAX_ENABLED,
+            !crate::rules::NPBUG_ENABLED,
         );
         // A complete header with no body proves capability admission runs before
         // Simulation deserialization, even without bound scenario resources.
@@ -7388,6 +7423,7 @@ mod tests {
             coordinate,
             10,
             rules.warhead("WH").unwrap(),
+            true,
             (RAD_NO_ATTACKER, None, warhead_id),
             crate::sim::world::FrameEffects::default(),
         );

@@ -230,6 +230,7 @@ impl Simulation {
             coord,
             damage,
             warhead,
+            true,
             (RAD_NO_ATTACKER, None, warhead_ref),
             effects,
         );

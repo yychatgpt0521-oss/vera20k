@@ -330,6 +330,7 @@ impl Simulation {
                     impact,
                     shot.damage,
                     warhead,
+                    true,
                     (source_id, None, warhead_id),
                     effects,
                 );

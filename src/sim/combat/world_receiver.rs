@@ -211,6 +211,7 @@ pub(crate) fn apply_foot_radiation(
                         impact,
                         damage,
                         warhead,
+                        true,
                         (attacker, source_house, warhead_id),
                         effects,
                     );
@@ -462,6 +463,7 @@ pub(crate) fn collect_area(
     cell: (u16, u16),
     damage: i32,
     warhead: &WarheadType,
+    affects_tiberium: bool,
     origin: (u64, Option<InternedId>, InternedId),
     air_impact: Option<combat_aoe::AoEAirImpact>,
     impact_z: i32,
@@ -505,7 +507,7 @@ pub(crate) fn collect_area(
                 rules,
                 warhead,
                 damage,
-                true,
+                affects_tiberium,
                 world.session.no_damage(),
                 &mut world.ore_growth_state,
                 world.terrain_objects.spawning_cells(),
@@ -522,7 +524,7 @@ pub(crate) fn collect_area(
             let mut deferred_prelude = world.receiver_fixture.as_mut().map(|fixture| {
                 super::receiver_fixture::DeferredCellPrelude {
                     amount: (!world.session.no_damage())
-                        .then(|| tiberium_reduction_amount(damage, true, warhead))
+                        .then(|| tiberium_reduction_amount(damage, affects_tiberium, warhead))
                         .flatten(),
                     deferred: &mut fixture.deferred_tiberium,
                 }
@@ -597,6 +599,8 @@ pub(crate) fn collect_area(
 /// the area's receivers around `impact` committed in order, then area rocking
 /// (`0x00489B49`) and bridge damage (`0x00489E87`). `origin` is the source object, the source
 /// house and the warhead's id. Returns whether a bridge changed.
+/// `affects_tiberium` gates only the per-cell Reduce_Tiberium call at
+/// `0x00489648..0x00489665` (original gamemd.exe); all other area effects remain active.
 pub(crate) fn apply_area_damage(
     world: &mut Simulation,
     rules: &RuleSet,
@@ -604,6 +608,7 @@ pub(crate) fn apply_area_damage(
     impact: ProjectileCoord,
     damage: i32,
     warhead: &WarheadType,
+    affects_tiberium: bool,
     origin: (u64, Option<InternedId>, InternedId),
     effects: FrameEffects<'_>,
 ) -> bool {
@@ -616,6 +621,7 @@ pub(crate) fn apply_area_damage(
         impact,
         damage,
         warhead,
+        affects_tiberium,
         origin,
     );
     let navigation = run.finish();
@@ -636,6 +642,7 @@ pub(crate) fn apply_area_damage_in_run(
     impact: ProjectileCoord,
     damage: i32,
     warhead: &WarheadType,
+    affects_tiberium: bool,
     origin: (u64, Option<InternedId>, InternedId),
 ) -> (DeathEffects, Vec<UnderAttackEvent>) {
     let area = collect_area_at(
@@ -645,6 +652,7 @@ pub(crate) fn apply_area_damage_in_run(
         impact,
         damage,
         warhead,
+        affects_tiberium,
         origin,
         run.effects(),
     );
@@ -706,13 +714,21 @@ fn collect_area_at<'r>(
     impact: ProjectileCoord,
     damage: i32,
     warhead: &'r WarheadType,
+    affects_tiberium: bool,
     origin: (u64, Option<InternedId>, InternedId),
     effects: FrameEffects<'_>,
 ) -> AreaAtImpact<'r> {
     // Observe the shared entry, including Bullet and nested receiver calls;
     // an external-only wrapper misses those paths and must not double-count.
     #[cfg(test)]
-    super::receiver_fixture::observe_area_visit(world, impact, damage, warhead, origin);
+    super::receiver_fixture::observe_area_visit(
+        world,
+        impact,
+        damage,
+        warhead,
+        affects_tiberium,
+        origin,
+    );
     let (rx, ry, sub_x, sub_y, z_leptons) = projectile_impact_cell(impact);
     let entered = damage != 0 && !world.session.no_damage();
     let routed_wall = entered && area_routes_to_wall(world, overlay_registry, (rx, ry), warhead);
@@ -723,6 +739,7 @@ fn collect_area_at<'r>(
         (rx, ry),
         damage,
         warhead,
+        affects_tiberium,
         origin,
         Some(combat_aoe::AoEAirImpact {
             sub_x,
@@ -1005,6 +1022,7 @@ pub(crate) fn commit_terrain(
             impact,
             100,
             c4_warhead,
+            true,
             (RAD_NO_ATTACKER, None, c4_id),
         );
         effects.append(nested);
@@ -1186,6 +1204,21 @@ pub(crate) fn commit_entities(
                 _ => None,
             }
         };
+        #[cfg(feature = "phobos")]
+        if shield_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.shield_damage_positive)
+            && rules
+                .warhead(world.interner.resolve(event.warhead_ref))
+                .is_some_and(|warhead| rules.decloak_damaged_targets_for(warhead))
+        {
+            // Phobos `ShieldClass::ReceiveDamage` (`ShieldClass.cpp:249..255`)
+            // uncloaks the target before the native receiver body runs, so a
+            // shield absorbed hit still surfaces it. The later native-slot
+            // call rejects the already-uncloaking state.
+            start_uncloaking_for_damage(world, target_id, rules, current_tick, sound_enabled);
+        }
+
         #[cfg(feature = "phobos")]
         #[cfg(feature = "ares")]
         let ares_initially_positive = shield_receipt
@@ -1476,48 +1509,21 @@ pub(crate) fn commit_entities(
         let uncloak_after_damage =
             uncloak_after_damage && receive_state != damage::DamageState::Unaffected;
 
+        // Phobos `TechnoClass_ReceiveDamage_Decloak @ 0x00702819` replaces the
+        // retail call with a per-warhead switch: only an admitting warhead
+        // reaches `Uncloak(false)`, and a missing extension skips it.
+        #[cfg(feature = "phobos")]
+        let uncloak_after_damage = uncloak_after_damage
+            && rules
+                .warhead(world.interner.resolve(event.warhead_ref))
+                .is_some_and(|warhead| rules.decloak_damaged_targets_for(warhead));
+
         // `0x0070281D`, in its native slot: after the `ToProtect` response
         // (`0x007027E9`); Object's Kill/Destroy have already returned. The
         // `StartUncloaking(0)` argument is zero, so it owns one positional
         // `[AudioVisual] CloakSound`.
         if uncloak_after_damage {
-            // Production combat callers derive `current_tick` from
-            // `ScenarioSession::binary_frame`, which is the clock the cloak step
-            // timer is compared against in `CloakingTick`.
-            let now = current_tick as i32;
-            let cloaking_speed = world
-                .substrate
-                .entities
-                .get(target_id)
-                .and_then(|target| world.interner.object_type(target.type_ref(), rules))
-                .map_or(1, |object| object.cloaking_speed);
-            // `TechnoClass::ReceiveDamage @ 0x0070281D` invokes virtual
-            // `+0xFC` (`0x00703850`, a plain `StartUncloaking(0)` wrapper) for
-            // every damage result that is not NowDead — the heal case
-            // included, because the `if (damage < 0) return` early-out sits
-            // AFTER this call. Argument zero, so the transition owns a
-            // `CloakSound`.
-            let surfaced = world
-                .substrate
-                .entities
-                .get_mut(target_id)
-                .and_then(|target| target.cloak.as_mut())
-                .map(|cloak| {
-                    cloak.start_uncloaking(
-                        now,
-                        cloaking_speed,
-                        rules.general.cloaking_stages,
-                        false,
-                    )
-                });
-            if surfaced.is_some_and(|result| result.play_sound) && sound_enabled {
-                emit_configured_cloak_sound(
-                    &world.substrate,
-                    &mut world.sound_events,
-                    target_id,
-                    rules,
-                );
-            }
+            start_uncloaking_for_damage(world, target_id, rules, current_tick, sound_enabled);
         }
 
         if latch_hostile_hit && let Some(target) = world.substrate.entities.get_mut(target_id) {
@@ -2959,6 +2965,7 @@ fn continue_area_damage(
                 context.impact,
                 rules.combat_damage.ammo_crate_damage,
                 c4,
+                true,
                 (RAD_NO_ATTACKER, context.source_house, reference),
             );
             death.append(nested);
@@ -3209,6 +3216,7 @@ fn emit_detonation_receivers<'r>(
                 detonation.impact,
                 detonation.payload.area_damage(),
                 warhead,
+                true,
                 (
                     detonation.source_id,
                     source_house,
@@ -3693,6 +3701,40 @@ fn receiver_tick(world: &Simulation) -> u64 {
         return fixture.current_tick;
     }
     u64::from(world.session.binary_frame())
+}
+
+/// One `StartUncloaking(0)` for a damage receiver: `TechnoClass::ReceiveDamage
+/// @ 0x0070281D`'s virtual `+0xFC` (`0x00703850`) and Phobos
+/// `ShieldClass::ReceiveDamage` (`ShieldClass.cpp:249..255`) share it.
+/// Production combat callers derive `current_tick` from
+/// `ScenarioSession::binary_frame`, the clock `CloakingTick` compares against.
+/// The native call passes the sound-suppression argument zero, so an accepted
+/// transition owns one positional `[AudioVisual] CloakSound`.
+fn start_uncloaking_for_damage(
+    world: &mut Simulation,
+    target_id: u64,
+    rules: &RuleSet,
+    current_tick: u64,
+    sound_enabled: bool,
+) {
+    let now = current_tick as i32;
+    let cloaking_speed = world
+        .substrate
+        .entities
+        .get(target_id)
+        .and_then(|target| world.interner.object_type(target.type_ref(), rules))
+        .map_or(1, |object| object.cloaking_speed);
+    let surfaced = world
+        .substrate
+        .entities
+        .get_mut(target_id)
+        .and_then(|target| target.cloak.as_mut())
+        .map(|cloak| {
+            cloak.start_uncloaking(now, cloaking_speed, rules.general.cloaking_stages, false)
+        });
+    if surfaced.is_some_and(|result| result.play_sound) && sound_enabled {
+        emit_configured_cloak_sound(&world.substrate, &mut world.sound_events, target_id, rules);
+    }
 }
 
 #[inline]

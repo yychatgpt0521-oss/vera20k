@@ -89,6 +89,7 @@ fn retail_landed_aircraft_clears_occupancy_before_the_next_victims_passenger_sca
         },
         600,
         rules.warhead("NUKE").unwrap(),
+        true,
         (RAD_NO_ATTACKER, Some(attacker_house), warhead_id),
         FrameEffects::default(),
     );

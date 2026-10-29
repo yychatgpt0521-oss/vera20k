@@ -1,0 +1,45 @@
+name: Online services
+
+# Pull requests that touch the relay protocol or the browser gateway run those
+# packages' own tests, which take a minute or two. The engine's library tests
+# stay in the manual platform workflows; relay changes also get
+# relay-compat.yml. The lobby Worker and its tests live in a private repository.
+on:
+  pull_request:
+    paths:
+      - 'services/**'
+      - 'tools/wasm/gateway/**'
+      - 'Cargo.lock'
+      - '.github/workflows/services.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: services-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  relay-protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p vera20k-relay-protocol --lib --no-fail-fast
+
+  gateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/wasm/gateway
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test

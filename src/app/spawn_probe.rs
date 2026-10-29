@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::app::frontend::cncnet_spawn::{
-    BATTLE_MODE_OVERRIDE_FILE, max_spawn_color_index, max_spawn_country_index,
+    max_spawn_color_index, max_spawn_country_index, spawn_battle_mode,
 };
 use crate::app::process_assets::ProcessAssets;
 use crate::app::shell_network_setup::agreement;
@@ -151,7 +151,7 @@ pub(crate) fn probe(
     let _ = assets.register_neutral_archives();
     process.return_from_loading(assets);
     let rules_digest = process
-        .multiplayer_rules_digest(BATTLE_MODE_OVERRIDE_FILE)
+        .multiplayer_rules_digest(&spawn_battle_mode().override_file)
         .map_err(anyhow::Error::msg)
         .context("could not digest the multiplayer rules")?;
     // The Session Country array and PrepareSession's Country bodies, as the

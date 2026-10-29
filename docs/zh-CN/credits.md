@@ -57,6 +57,9 @@ Phobos 由 Phobos Developers 开发。VERA20K 已移植功能对应的原作者�
 - 匍匐移动速度（`ProneSpeed`）— **TaranDahl**。
 - 建筑类型选择（`BuildingTypeSelectable`）— **TaranDahl**（代码）、**Ollerus**（文档）。
 - 选中单位闪烁（`ShowFlashOnSelecting`）— **Fryone**。
+- 弹头自伤开关（`AllowDamageOnSelf`）— **Starkku**；它与 `DamageSelf` 对空中单位的修复 — **NetsuNegi**。
+- 抛射体自定义重力（`Gravity`）— **secsome**。
+- 弹头解除隐形开关（`DecloakDamagedTargets`）— **Starkku**。
 - `Locomotor=Fly` 浮动开关（`FlyNoWobbles`）— **Noble_Fish**。
 - 暂停界面居中 — **Starkku**。
 - 去硬编码计时器闪烁配色方案（`TimerBlinkColorScheme`）— **Starkku**。

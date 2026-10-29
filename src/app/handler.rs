@@ -426,7 +426,10 @@ impl App {
             }
             Err(err) => {
                 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
-                crate::web::status(&format!("Startup failed: {err:#}"));
+                {
+                    crate::web::request_exit(Some(&format!("Startup failed: {err:#}")));
+                    crate::web::status(&format!("Startup failed: {err:#}"));
+                }
                 log::error!("Failed to initialize: {:#}", err);
                 if self.spawn_request.is_some() || self.replay_request.is_some() {
                     self.startup_failure = Some(format!("CnCNet initialization failed: {err:#}"));
@@ -1693,9 +1696,10 @@ impl ApplicationHandler for App {
             return;
         }
         let shell_scroll_wake = if let Some(state) = self.state.as_mut() {
-            // docs/spawn.md: a browser page's next launch after the last ended.
             #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
-            Self::poll_queued_spawn(state);
+            if Self::poll_browser_exit(state, event_loop) {
+                return;
+            }
             Self::follow_window_full_screen(state);
             // cursor lock: the OS drops the clip on focus loss /
             // Windows key, so re-assert the player's choice every frame while
@@ -1877,6 +1881,10 @@ impl ApplicationHandler for App {
             crate::app::match_runtime::sim_tick::flush_replay_log(state);
         }
         log::logger().flush();
+        // A confirmed quit (its cascade's Theme Stop(0), 0x0052E7EC, has run)
+        // or a page unload tears down a running game.
+        #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+        self.browser_exiting();
     }
 }
 

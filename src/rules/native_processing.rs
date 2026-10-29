@@ -1837,6 +1837,32 @@ impl ProcessedRulesLayers {
             .rules_ammo_crate_damage
     }
 
+    pub(crate) fn tiberium_explosion_damage(&self) -> i32 {
+        self.native_type_construction_trace
+            .registry_state()
+            .rules_tiberium_explosion_damage
+    }
+
+    /// `TiberiumClass::ReadINI_All @ 0x00721D10` / `ReadINI @ 0x00721A50`:
+    /// retained ordinal, admitted body, Color and Debris.
+    /// The Debris factory answers belong to this read, not a final text lookup.
+    pub(crate) fn tiberium_read_states(
+        &self,
+    ) -> impl Iterator<Item = (&str, &IniSection, i32, &[String])> {
+        self.native_type_construction_trace
+            .registry_state()
+            .tiberiums
+            .iter()
+            .map(|member| {
+                (
+                    member.native_stored_id.as_str(),
+                    &member.body,
+                    member.tiberium_color_scheme,
+                    member.tiberium_debris.as_slice(),
+                )
+            })
+    }
+
     pub(crate) fn combat_damage_death_weapon(&self) -> Option<&str> {
         self.native_type_construction_trace
             .registry_state()
@@ -3381,6 +3407,7 @@ pub(crate) struct NativeRulesRegistryState {
     rules_talk_bubble_time: i32,
     rules_spotlight: crate::rules::ruleset::SpotlightRules,
     rules_ammo_crate_damage: i32,
+    rules_tiberium_explosion_damage: i32,
     rules_ion_cannon_damage: i32,
     rules_ion_blast_anim: String,
     rules_ion_beam_anim: String,
@@ -3476,6 +3503,8 @@ impl Default for NativeRulesRegistryState {
             rules_spotlight: general.spotlight,
             // Rules665CD4=700; pointer fields665A18/665A24/666BD5 start null.
             rules_ammo_crate_damage: 100,
+            // RulesCtor665CE8/665D5C: signed Rules+568 starts at100.
+            rules_tiberium_explosion_damage: 100,
             rules_ion_cannon_damage: 700,
             rules_ion_blast_anim: String::new(),
             rules_ion_beam_anim: String::new(),
@@ -3883,6 +3912,7 @@ impl NativeRulesRegistryState {
             rules_talk_bubble_time: self.rules_talk_bubble_time,
             rules_spotlight: self.rules_spotlight,
             rules_ammo_crate_damage: self.rules_ammo_crate_damage,
+            rules_tiberium_explosion_damage: self.rules_tiberium_explosion_damage,
             rules_ion_cannon_damage: self.rules_ion_cannon_damage,
             rules_mind_control_attack_line_frames: self.rules_mind_control_attack_line_frames,
             rules_line_trail_override: self.rules_line_trail_override,
@@ -4163,6 +4193,10 @@ struct ProcessedType {
     /// HouseType ctor51141C starts Color+C0 at0; each reached ReadINI
     /// passes the current index to the shared ReadColor474A90.
     country_color_scheme: i32,
+    /// TiberiumCtor72171F/721731: Color0 and an empty Debris vector;
+    /// ReadINI721B20..721C1E retains these on the same live Tiberium object.
+    tiberium_color_scheme: i32,
+    tiberium_debris: Vec<String>,
     /// HouseType ctor511416 writes-1. Side67259A and the late Side reader
     /// 51209E/4756F0 update this binding on the same retained Country.
     country_side_index: i32,
@@ -4755,6 +4789,8 @@ impl ProcessedType {
             techno_references: TechnoTypeReferences::new(),
             native_stored_id,
             country_color_scheme: 0,
+            tiberium_color_scheme: 0,
+            tiberium_debris: Vec::new(),
             country_side_index: -1,
             country_parent: String::new(),
             country_veterancy: CountryVeterancyState::default(),
@@ -4984,6 +5020,7 @@ struct RulesPassProcessor {
     rules_talk_bubble_time: i32,
     rules_spotlight: crate::rules::ruleset::SpotlightRules,
     rules_ammo_crate_damage: i32,
+    rules_tiberium_explosion_damage: i32,
     rules_ion_cannon_damage: i32,
     rules_ion_blast_anim: String,
     rules_ion_beam_anim: String,
@@ -5063,6 +5100,7 @@ impl RulesPassProcessor {
             rules_talk_bubble_time: registry_state.rules_talk_bubble_time,
             rules_spotlight: registry_state.rules_spotlight,
             rules_ammo_crate_damage: registry_state.rules_ammo_crate_damage,
+            rules_tiberium_explosion_damage: registry_state.rules_tiberium_explosion_damage,
             rules_ion_cannon_damage: registry_state.rules_ion_cannon_damage,
             rules_ion_blast_anim: registry_state.rules_ion_blast_anim,
             rules_ion_beam_anim: registry_state.rules_ion_beam_anim,
@@ -7616,9 +7654,19 @@ impl RulesPassProcessor {
             };
             let bullet = &self.families[&RulesTypeFamily::Projectile][projectile].body;
             if bullet.read_int("ROT", 0) == 0 {
+                // Phobos `WeaponTypeClass_SetSpeed_ApplyGravity` 0x772A0A
+                // selects the type's own `Gravity` over the current Rules one.
+                #[cfg(feature = "phobos")]
+                let gravity = crate::rules::projectile_type::read_phobos_gravity(bullet).map_or(
+                    crate::util::native_ballistics::BallisticGravity::Rules(self.rules_gravity),
+                    crate::util::native_ballistics::BallisticGravity::Value,
+                );
+                #[cfg(not(feature = "phobos"))]
+                let gravity =
+                    crate::util::native_ballistics::BallisticGravity::Rules(self.rules_gravity);
                 let speed = crate::util::native_ballistics::ballistic_launch_speed(
                     state.range_leptons,
-                    self.rules_gravity,
+                    gravity,
                     bullet.read_bool("Floater", false),
                 );
                 self.family_mut(RulesTypeFamily::Weapon)[index].weapon.speed = speed;
@@ -7995,6 +8043,13 @@ impl RulesPassProcessor {
         // current Rules+490 default, constructor665CD4=700, no clamp.
         self.rules_ion_cannon_damage =
             section.read_int("IonCannonDamage", self.rules_ion_cannon_damage);
+        // RulesClass::ReadCombatDamage @ 0x0066BBB0, original instructions
+        //66BC37..66BC51: current signed Rules+568,
+        // ReadInt5276D0, with no clamp; it precedes the Scorches factories.
+        self.rules_tiberium_explosion_damage = section.read_int(
+            "TiberiumExplosionDamage",
+            self.rules_tiberium_explosion_damage,
+        );
         for key in [
             "Scorches",
             "Scorches1",
@@ -8202,7 +8257,23 @@ impl RulesPassProcessor {
             let native_stored_id = self.tiberiums[index].native_stored_id.clone();
             if let Some(section) = pass.section(&native_stored_id).cloned() {
                 self.tiberiums[index].body.overlay_rules_pass(&section);
-                self.allocate_list_from(&section, "Debris", RulesTypeFamily::Animation, 0x80);
+                // TiberiumClass::ReadINI @ 0x00721A50, original instructions
+                //721B20..721B3A, uses the current Color ordinal
+                // and the catalog already present in this pass. ReadColor474A90
+                // can normalize ctor0 to shade53 index1 even for an absent key.
+                self.tiberiums[index].tiberium_color_scheme = section.read_color_scheme(
+                    "Color",
+                    self.tiberiums[index].tiberium_color_scheme,
+                    self.colors.iter().map(|(name, _)| name.as_str()),
+                );
+                //721B40..721C1E: nonempty ReadString128 replaces the list
+                // with ordered nonnull AnimType428B80 answers. Keep this late
+                // factory site after this pass's Anim ART sweep668EF0.
+                if let Some(debris) =
+                    self.resolve_list_from(&section, "Debris", RulesTypeFamily::Animation, 0x80)
+                {
+                    self.tiberiums[index].tiberium_debris = debris;
+                }
             }
         }
         Ok(())
@@ -8309,6 +8380,7 @@ impl RulesPassProcessor {
                     rules_talk_bubble_time: self.rules_talk_bubble_time,
                     rules_spotlight: self.rules_spotlight,
                     rules_ammo_crate_damage: self.rules_ammo_crate_damage,
+                    rules_tiberium_explosion_damage: self.rules_tiberium_explosion_damage,
                     rules_ion_cannon_damage: self.rules_ion_cannon_damage,
                     rules_ion_blast_anim: self.rules_ion_blast_anim,
                     rules_ion_beam_anim: self.rules_ion_beam_anim,

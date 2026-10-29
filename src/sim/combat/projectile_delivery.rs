@@ -150,6 +150,8 @@ fn classify_projectile_type(
             airburst: projectile.airburst,
             inaccurate: projectile.inaccurate,
             floater: projectile.floater,
+            #[cfg(feature = "phobos")]
+            gravity: projectile.gravity(),
             elasticity_bits: projectile.elasticity.to_bits(),
             arcing: projectile.arcing,
         },

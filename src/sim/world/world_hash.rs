@@ -1636,6 +1636,13 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         b"techno-object-group-v1".hash(hasher);
         entity.object_group().hash(hasher);
     }
+    if entity.unit_follower().is_some() || entity.is_unit_follower() {
+        // UnitClass::ComputeCRC744640 includes the +6C8 peer identity and
+        // independent +6D0 byte at744678..7446AB (gamemd.exe instructions).
+        b"unit-follower-v1".hash(hasher);
+        entity.unit_follower().hash(hasher);
+        entity.is_unit_follower().hash(hasher);
+    }
     if entity.techno_ctor_random_word() != 0 {
         b"techno-constructor-v1".hash(hasher);
         entity.techno_ctor_random_word().hash(hasher);

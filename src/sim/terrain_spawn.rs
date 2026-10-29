@@ -1330,6 +1330,7 @@ mod tests {
                 at,
                 10000,
                 he,
+                true,
                 (crate::sim::combat::RAD_NO_ATTACKER, None, he_ref),
                 crate::sim::world::FrameEffects::default(),
             );
@@ -1411,6 +1412,7 @@ mod tests {
             impact,
             10,
             warhead,
+            true,
             (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
             crate::sim::world::FrameEffects::default(),
         );
@@ -1428,6 +1430,7 @@ mod tests {
             impact,
             10000,
             warhead,
+            true,
             (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
             crate::sim::world::FrameEffects::default(),
         );
@@ -1585,6 +1588,7 @@ mod tests {
             (2, 2),
             10,
             he,
+            true,
             origin,
             None,
             0,
@@ -1633,6 +1637,7 @@ mod tests {
             impact,
             10000,
             he,
+            true,
             origin,
             FrameEffects::default(),
         );
@@ -2195,6 +2200,7 @@ mod tests {
                 impact,
                 10000,
                 warhead,
+                true,
                 (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
                 crate::sim::world::FrameEffects::default(),
             );

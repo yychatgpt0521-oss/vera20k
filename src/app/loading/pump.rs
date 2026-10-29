@@ -3235,6 +3235,15 @@ fn apply_network_loading_disconnects(
     indices: &[usize],
 ) -> Vec<crate::app::match_runtime::network_match::ConnectionDestroyed> {
     use crate::app::match_runtime::network_match::{ConnectionError, destroy_connection};
+    // VERA online adaptation: the relay certificate fixes an online match's
+    // sources, and the relay departs a player who never becomes ready in the
+    // first frame for every client. A local disconnect would leave this
+    // client's roster short of that certificate.
+    if session.network_return_context()
+        == Some(crate::app::match_runtime::session::NetworkReturnContext::Wol)
+    {
+        return Vec::new();
+    }
     let Some(sim) = result.scenario.simulation.as_mut() else {
         // No House array to consult: the connections still drop.
         for &index in indices {

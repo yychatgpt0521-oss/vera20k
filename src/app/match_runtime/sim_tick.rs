@@ -1347,11 +1347,12 @@ fn advance_one_simulation_frame(
                 #[cfg(feature = "ares")]
                 let flying_credits = &state.match_state.match_presentation.flying_credits;
                 #[cfg(feature = "ares")]
-                let queue_bounty = |sim: &crate::sim::world::Simulation,
-                                    rules: &crate::rules::ruleset::RuleSet,
-                                    text: crate::sim::bounty::BountyText| {
-                    flying_credits.borrow_mut().admit(sim, rules, text);
-                };
+                let queue_bounty =
+                    |sim: &crate::sim::world::Simulation,
+                     rules: &crate::rules::ruleset::RuleSet,
+                     text: crate::sim::bounty::BountyText| {
+                        flying_credits.borrow_mut().admit(sim, rules, text);
+                    };
                 let boundary = super::frame_effects::FrameClientBoundary::new(
                     playback,
                     local_owner_name.as_deref(),
@@ -1405,7 +1406,8 @@ fn advance_one_simulation_frame(
                         }
                     }
                 } else {
-                    match resume {
+                    let network = rt.simulation.session().game_mode().is_network();
+                    let advanced = match resume {
                         FrameResume::ChecksumModal => rt.resume_after_network_failure(effects),
                         FrameResume::NetworkWait => rt.resume_network_wait(effects),
                         FrameResume::NetworkLeave => rt.leave_network_wait(effects),
@@ -1413,8 +1415,18 @@ fn advance_one_simulation_frame(
                         FrameResume::None => {
                             rt.advance_frame(&due_commands, SIM_TICK_MS, tick_lane, effects)
                         }
+                    };
+                    // VERA-only: a peer's malformed event or a failed checksum
+                    // must not crash a LAN/online match. The frame did not
+                    // commit, so this timeline never runs again; the checksum
+                    // box's Stop returns to the shell. Offline, only internal
+                    // defects reach here, so they stay a loud panic.
+                    if network && let Err(error) = &advanced {
+                        log::error!("{error}");
+                        state.match_state.frame_stopped = true;
+                        return false;
                     }
-                    .expect("simulation frame failed; prior world mutations remain")
+                    advanced.expect("simulation frame failed; prior world mutations remain")
                 }
             };
             state
@@ -2032,7 +2044,8 @@ pub(crate) fn apply_trigger_effects(state: &mut AppState, effects: &[TriggerEffe
                 }
             }
             TriggerEffect::FlashSidebarCameo {
-                type_id,
+                category,
+                type_index,
                 duration,
                 frame,
             } => {
@@ -2043,7 +2056,8 @@ pub(crate) fn apply_trigger_effects(state: &mut AppState, effects: &[TriggerEffe
                         .match_presentation
                         .sidebar_projection
                         .flash_cameo(
-                            *type_id,
+                            *category,
+                            *type_index,
                             *duration,
                             *frame,
                             runtime.simulation.interner(),

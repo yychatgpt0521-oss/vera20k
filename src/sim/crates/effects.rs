@@ -406,8 +406,8 @@ pub(super) fn apply_gas_crate(
             crate::map::resolved_terrain::NativeCellQuery::canonical(terrain).lookup(target)
         });
         let centre = super::pickup::crate_center(sim, target, receiver);
-        // RESIDUAL: native passes affectsTiberium=0 (0x00481E17, 0x00481E71);
-        // apply_area_damage hard-codes 1. Dormant: retail [Gas] sets no Tiberium=.
+        // CellClass::PickupCrate481A00 passes affectsTiberium=false at
+        // 481E19/481E71 (original gamemd.exe); ordinary receivers still run.
         crate::sim::combat::world_receiver::apply_area_damage(
             sim,
             rules,
@@ -415,6 +415,7 @@ pub(super) fn apply_gas_crate(
             crate::sim::projectile::ProjectileCoord::new(centre.x, centre.y, centre.z),
             amount,
             warhead,
+            false,
             (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
             frame_effects,
         );
@@ -612,6 +613,7 @@ pub(super) fn apply_explosion_crate(
             scattered,
             amount,
             warhead,
+            true,
             (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
             frame_effects,
         );
@@ -714,6 +716,7 @@ pub(super) fn apply_napalm_crate(
         crate::sim::projectile::ProjectileCoord::new(mid.x, mid.y, mid.z),
         amount,
         warhead,
+        true,
         (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
         frame_effects,
     );

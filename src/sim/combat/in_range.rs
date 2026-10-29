@@ -65,7 +65,9 @@ use crate::util::fixed_math::SimFixed;
 use crate::util::lepton::{
     BRIDGE_DECK_HEIGHT_LEPTONS, LEPTONS_PER_LEVEL, WEAPON_RANGE_ALWAYS_IN_RANGE_LEPTONS,
 };
-use crate::util::native_ballistics::{ballistic_can_reach, ballistic_launch_speed};
+use crate::util::native_ballistics::{
+    BallisticGravity, ballistic_can_reach, ballistic_launch_speed,
+};
 use crate::util::native_x87::{
     NativeF64Bits, X87Chop53, X87Ordering, sqrt_approx_f32, sqrt_approx_length,
 };
@@ -166,7 +168,10 @@ fn arcing_reaches(
         return false;
     }
     let rise = (target.2 as i32).wrapping_sub(src.2 as i32);
-    let gravity = rules.general.gravity;
+    let gravity = match projectile.gravity() {
+        Some(bits) => BallisticGravity::Value(bits),
+        None => BallisticGravity::Rules(rules.general.gravity),
+    };
     let speed = ballistic_launch_speed(range as i32, gravity, projectile.floater);
     ballistic_can_reach(speed, distance, rise, gravity, projectile.floater)
 }

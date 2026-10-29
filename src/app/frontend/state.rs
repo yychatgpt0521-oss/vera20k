@@ -23,9 +23,9 @@ pub(crate) struct FrontendState {
     pub(crate) external_match_result: Option<crate::app::cncnet::ExternalMatchResult>,
     /// Frames, duration and opponent departure for the launch report.
     pub(crate) external_progress: crate::app::cncnet::ExternalLaunchProgress,
-    /// Browser only: an ended external launch waits on the menu backdrop,
-    /// without shell input, for the host's next `start_spawn` (docs/spawn.md).
-    pub(crate) external_idle: bool,
+    /// Browser launch is closing its network owners before engine exit.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+    pub(crate) browser_exit_pending: bool,
     /// The Skirmish setup dialog's state.
     pub(crate) skirmish_shell_state: crate::ui::skirmish_shell::SkirmishShellState,
     /// Choose Map's last clicked game-type row `[0x008316FC]`: starts at -1,

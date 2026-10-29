@@ -174,7 +174,7 @@ fn speed_frame_budget(game_speed: i32) -> (i32, i32) {
 /// The launch speed whose PreCalcFrameRate row is `frames_per_second`: the
 /// inverse of [`speed_frame_budget`] over the in-game speeds 0..=6. The VERA
 /// lobby signs this rate into relay ordering certificates
-/// (services/lobby/protocol.md, launch speed `[60,45,30,20,15,12,10]`).
+/// (docs/lobby-protocol.md, launch speed `[60,45,30,20,15,12,10]`).
 pub fn game_speed_for_frame_rate(frames_per_second: u16) -> Option<i32> {
     (0..=i32::from(crate::sim::game_options::IN_GAME_OPTIONS_MAX_SPEED))
         .find(|&speed| speed_frame_budget(speed).1 == i32::from(frames_per_second))
@@ -332,12 +332,6 @@ impl SynchronizedCommand {
     ) -> Option<crate::sim::command::CommandEnvelope> {
         sim.decode_native_command_record(&self.record, execute_tick)
     }
-
-    fn stamp_for_network(&mut self, house_id: i8, execute_frame: u32) {
-        self.record.set_house_id(house_id);
-        self.record.set_frame_stamp(execute_frame as i32);
-        self.record.clear_processed();
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -447,11 +441,13 @@ impl SynchronizedCommandQueue {
     /// Build one logical network-transfer batch.
     ///
     /// The transport owner supplies how many FIFO command records it selected
-    /// for this send. This queue layer prepends FRAMEINFO, stamps and mirrors at
-    /// most that many records, and enforces the native
-    /// `0x2000 - DoListCount` local-mirror allowance. Physical packet sizing,
-    /// packet splitting, compression, and extended payload ownership remain
-    /// transport-layer work.
+    /// for this send. This queue layer prepends FRAMEINFO and enforces the
+    /// native `0x2000 - DoListCount` local-mirror allowance; the production
+    /// send step `EventPacketCodec::encode_packet` (SendOutList `64B97A..64BA6A`)
+    /// stamps the mirrors and stops before a record it cannot send. Physical
+    /// packet sizing and the compression cache stay with the transport owner,
+    /// so this batch uses an unbounded packet and a fresh codec. Panics for a
+    /// negative house, which the send step rejects.
     pub fn transfer_network(
         &mut self,
         current_frame: u32,
@@ -472,22 +468,30 @@ impl SynchronizedCommandQueue {
             .len()
             .min(NETWORK_LOCAL_MIRROR_LIMIT.saturating_sub(self.do_list.len()))
             .min(selected_command_limit);
-        let mut transfer = Vec::with_capacity(transfer_count + 1);
-        transfer.push(
-            FrameInfo {
-                house_id: local_house_id,
-                event_frame: execute_frame as i32,
-                checksum: current_checksum,
-                timing_word,
-                delay: policy.delay(current_frame, max_ahead),
-            }
-            .encode(),
-        );
+        let header = FrameInfo {
+            house_id: local_house_id,
+            event_frame: execute_frame as i32,
+            checksum: current_checksum,
+            timing_word,
+            delay: policy.delay(current_frame, max_ahead),
+        };
+        let selected: Vec<&CommandRecord> = self
+            .local
+            .iter()
+            .take(transfer_count)
+            .map(SynchronizedCommand::record)
+            .collect();
+        let encoded = crate::net::event_packet::EventPacketCodec::default()
+            .encode_packet(&selected, header, current_frame as i32, usize::MAX)
+            .expect("transfer house is a registered nonnegative source");
 
-        for mut command in self.local.take_prefix(transfer_count) {
-            command.stamp_for_network(local_house_id, execute_frame);
-            transfer.push(command.record.clone());
-            self.do_list.admit(command);
+        let mut transfer = Vec::with_capacity(encoded.mirrors.len() + 1);
+        transfer.push(header.encode());
+        // The mirrors replace their sent sources.
+        self.local.take_prefix(encoded.mirrors.len()).for_each(drop);
+        for mirror in encoded.mirrors {
+            transfer.push(mirror.clone());
+            self.do_list.admit(SynchronizedCommand::opaque(mirror));
         }
         transfer
     }

@@ -81,6 +81,7 @@ pub(super) fn launch(
         impact,
         settings.damage,
         warhead,
+        true,
         (source, Some(owner), warhead_ref),
         effects,
     );

@@ -10,8 +10,8 @@
 //! This boundary admits one local human, Battle and stock YR campaigns. Ares
 //! builds also carry allocated custom Country identities into Battle startup.
 //! External campaigns pass an explicit Scenario independently of record0.
-//! Multiplayer Battle files (`PlayerCount>1`, docs/spawn.md) normalize into a
-//! canonical source-ordered session plus a relay or direct transport.
+//! Multiplayer Battle files (`PlayerCount>1` or `[Relay]`, docs/spawn.md) normalize
+//! into a canonical source-ordered session plus a relay or direct transport.
 //! It does not load native saves or load extension DLLs.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -37,9 +37,11 @@ pub(crate) struct SpawnRequest {
     pub(crate) expected: SpawnExpectations,
 }
 
-/// The mode file every spawn Battle selects (`GameMode=1`); the multiplayer
-/// rules agreement and `--probe` digest the rules through this mode.
-pub(crate) const BATTLE_MODE_OVERRIDE_FILE: &str = "MPBattleMD.ini";
+/// The stock Battle row every spawn selects (`GameMode=1`); the multiplayer
+/// rules agreement and `--probe` digest the rules through its mode file.
+pub(crate) fn spawn_battle_mode() -> SkirmishLaunchMode {
+    SkirmishLaunchMode::stock(crate::skirmish_launch::BATTLE_MODE_ID).expect("stock Battle row")
+}
 
 /// `[Settings] ExpectedVersion`, `ExpectedRulesDigest`, `ExpectedMapDigest`
 /// (docs/spawn.md). Absent values are not checked.
@@ -264,7 +266,9 @@ impl SpawnRequest {
             1,
             NETWORK_PLAYER_SLOT_COUNT as i32,
         )? as usize;
-        let multiplayer = player_count > 1;
+        // A launcher may host one human against AI while the relay and match
+        // service still own the clock and lifecycle.
+        let multiplayer = player_count > 1 || ini.section("Relay").is_some();
         ensure!(
             !boolean(settings, "IsSpectator", false)?,
             "spectator launches are unsupported"
@@ -283,10 +287,6 @@ impl SpawnRequest {
                 "[Other{index}] requests an additional human player"
             );
         }
-        ensure!(
-            multiplayer || ini.section("Relay").is_none(),
-            "[Relay] requires PlayerCount>1"
-        );
 
         let mut game_speed = ranged(
             settings,
@@ -420,7 +420,7 @@ fn skirmish(
         !boolean(settings, "SpecialHouseIsAlly", true)?,
         "SpecialHouseIsAlly=Yes is unsupported; use the VERA client profile"
     );
-    let multiplayer = player_count > 1;
+    let multiplayer = player_count > 1 || ini.section("Relay").is_some();
     let house_slots = if multiplayer {
         NETWORK_PLAYER_SLOT_COUNT
     } else {
@@ -565,7 +565,7 @@ fn skirmish(
         "AIPlayers={ai_count} does not match {} active HouseHandicaps entries",
         opponents.len()
     );
-    // The lobby's start admission (services/lobby/protocol.md): spectators
+    // The lobby's start admission (docs/lobby-protocol.md): spectators
     // exclude AI, and at least two participants play.
     let spectators = humans.iter().filter(|human| human.is_observer()).count();
     ensure!(
@@ -625,18 +625,7 @@ fn skirmish(
         ally_change_allowed: boolean(settings, "AlliesAllowed", false)?,
     };
     let mut session = SkirmishLaunchSession {
-        // Exact stock descriptor accepted by the shared pre-Fill owner.
-        mode: SkirmishLaunchMode {
-            class: crate::skirmish_modes::MpModeClass::Battle,
-            id: 1,
-            ui_name_key: "GUI:Battle".to_string(),
-            tooltip_key: "STT:ModeBattle".to_string(),
-            override_file: BATTLE_MODE_OVERRIDE_FILE.to_string(),
-            map_filter: "standard".to_string(),
-            random_maps_allowed: true,
-            allies_allowed: true,
-            must_ally: false,
-        },
+        mode: spawn_battle_mode(),
         selected_map_file: Some(scenario),
         humans,
         local_player_index,

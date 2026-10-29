@@ -244,7 +244,15 @@ pub(super) fn apply_building_receive_prelude(
         return BuildingReceivePrelude::Continue;
     };
 
-    if event.attacker_id == event.target_id && !target_type.damage_self {
+    // `0x00442262` returns zero for disallowed self damage. Phobos
+    // `BuildingClass_ReceiveDamage_DamageSelf @ 0x0044224F` skips that return
+    // when the warhead's AllowDamageOnSelf admits the firer.
+    if event.attacker_id == event.target_id
+        && !target_type.damage_self
+        && !rules
+            .warhead(interner.resolve(event.warhead_ref))
+            .is_some_and(|warhead| rules.allow_damage_on_self_for(warhead))
+    {
         return BuildingReceivePrelude::ReturnZero;
     }
     if event.attacker_id == RAD_NO_ATTACKER || target_type.is_1x1_with_undeploy() {

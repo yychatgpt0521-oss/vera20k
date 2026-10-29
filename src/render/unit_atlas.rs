@@ -219,7 +219,8 @@ pub struct UnitAtlasPage {
 
 /// Observation of resident palette-index textures, including unused page space.
 /// This excludes CPU caches, pose/slope caches, other atlases and driver overhead.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// The default is the receipt of an atlas never built: no sprites and no pages.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct UnitAtlasStatistics {
     pub resident_sprite_count: usize,
     /// Last non-no-op build's rasterized sprites, including shadow sprites;

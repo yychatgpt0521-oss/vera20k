@@ -78,6 +78,7 @@ fn unit(owner: &str, type_id: &str, cx: u16, cy: u16, cat: EntityCategory) -> Ma
         recruitable_a: true,
         recruitable_b: true,
         group: -1,
+        follows: None,
         structure_upgrades: [None, None, None],
         structure_ai_sellable: false,
         structure_ai_repairable: false,
@@ -406,7 +407,12 @@ fn unit(owner: &str, type_id: &str, cx: u16, cy: u16, cat: EntityCategory) -> Ma
 // #3099 adds the permanent-stealth grant byte for every entity, false here.
 // Omitting only that hash fold recovers 0x5725_6E95_8F9E_04F8; the unchanged
 // replay, gameplay and absolute RNG assertions pass with either composition.
-const SLICE6_BASELINE_HASH: u64 = 0x00C5_304C_C361_38CE;
+// #3234 removed the entity hash's sensor deposit, a None byte for every object
+// here. It sat in the same run of zero bytes as that grant byte, so the pin
+// returns to the value above. Hash composition only: a temporary control
+// restoring the byte gave the previous value, with every tripwire above green.
+// Control removed. Previous: 0x00C5_304C_C361_38CE.
+const SLICE6_BASELINE_HASH: u64 = 0x5725_6E95_8F9E_04F8;
 
 #[test]
 fn replay_hash_stable_through_slice6() {

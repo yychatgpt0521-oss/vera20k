@@ -28,7 +28,8 @@ const LAYER_RULES: &[(&str, &[&str])] = &[
     ("rules", &["sim", "map"]),
     ("map", &["sim", "render", "app"]),
     ("render", &["app"]),
-    ("ui", &["app", "skirmish_scenarios"]),
+    // render draws ui view models; ui stays render-agnostic.
+    ("ui", &["app", "render", "skirmish_scenarios"]),
     ("sim", &["render", "ui", "audio", "net"]),
 ];
 
@@ -1228,7 +1229,6 @@ fn mutable_handouts_and_setters_are_owner_operations() {
             "install_receipt",
             "the map read builds the tube receipt in place once; binding takes it once",
         ),
-        ("net/lockstep.rs", "payload_mut", PAYLOAD),
         (
             "net/udp.rs",
             "deref_mut",

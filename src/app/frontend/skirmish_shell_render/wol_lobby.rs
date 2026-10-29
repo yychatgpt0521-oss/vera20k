@@ -247,14 +247,16 @@ pub(crate) fn paint_wol_lobby_children(
         .chat
         .list
         .geometry(layout.chat_log, ui.chat.lines.len(), scale);
-    list_controls(
-        &mut paint.controls,
-        atlas,
-        lobbies,
-        &ui.lobby_list,
-        true,
-        scale,
-    );
+    if !modern {
+        list_controls(
+            &mut paint.controls,
+            atlas,
+            lobbies,
+            &ui.lobby_list,
+            true,
+            scale,
+        );
+    }
     list_controls(
         &mut paint.controls,
         atlas,

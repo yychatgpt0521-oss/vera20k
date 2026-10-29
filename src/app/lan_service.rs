@@ -1502,17 +1502,16 @@ pub(crate) fn online_peer_round_trips(state: &AppState) -> Option<Vec<(u8, u32)>
         .relay_peer_round_trips()
 }
 
-pub(crate) fn online_relay_expires(state: &AppState) -> Option<u64> {
+pub(crate) fn has_online_relay_route(state: &AppState) -> bool {
     if let Some(live) = state.match_state.live_network.as_ref() {
-        return live.relay_expires();
+        return live.relay_expires().is_some();
     }
     state
         .match_state
         .lan_service
-        .as_ref()?
-        .transport
-        .as_ref()?
-        .relay_expires()
+        .as_ref()
+        .and_then(|service| service.transport.as_ref())
+        .is_some_and(|transport| transport.relay_expires().is_some())
 }
 
 pub(crate) fn renew_online_relay(
@@ -1857,6 +1856,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
             && let Some(event) = super::match_runtime::network_match::decode_kick_proposal(
                 &state.match_state.session,
                 &runtime.simulation,
+                incoming.source,
                 &incoming.payload,
             )
         {

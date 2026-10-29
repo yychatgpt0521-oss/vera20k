@@ -11,10 +11,13 @@
 //! - `vxl_raster.rs` — software voxel rasterizer (renders .vxl to sprite textures)
 //!
 //! ## Dependency rules
-//! - render/ may READ from: assets/, map/, sim/
+//! - render/ may READ from: assets/, map/, rules/, sim/, util/, and the ui/
+//!   view models it draws (shell geometry and slides, sidebar rects and theme,
+//!   the UIMD command-bar list read with the side art at 534FA0/674650)
 //! - render/ reads sim state; presentation producers may consume the explicitly
 //!   borrowed process Main cursor, never Scenario/MapGen or gameplay state
-//! - render/ does NOT depend on: ui/, audio/, net/
+//! - ui/ never depends on render/ (architecture_guards LAYER_RULES)
+//! - render/ does NOT depend on: app/, audio/, net/
 
 pub(crate) mod aircraft_shadow;
 pub(crate) mod atlas_growth;
@@ -95,6 +98,7 @@ mod voxel_parity_tests;
 pub mod vxl_normals;
 pub mod vxl_raster;
 pub mod wave_geometry;
+pub(crate) mod webgl;
 
 #[cfg(test)]
 mod sidebar_gpu_tests;

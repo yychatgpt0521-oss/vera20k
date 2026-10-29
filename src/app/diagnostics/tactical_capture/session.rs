@@ -218,6 +218,7 @@ impl TacticalCaptureSession {
             return Ok(());
         }
         let profile = self.request.profile()?;
+        profile.check_roster_mode(&state.frontend.skirmish_modes)?;
         let capture = &profile.capture;
         ensure!(
             state.renderer.gpu.config.width == capture.output_width
@@ -1606,7 +1607,6 @@ fn validate_loaded_resources(state: &AppState) -> Result<()> {
             && state.match_state.match_presentation.tile_atlas.is_some()
             && state.match_state.match_presentation.terrain_grid.is_some()
             && state.terrain_template().is_some()
-            && state.match_state.match_presentation.unit_atlas.is_some()
             && state.match_state.match_presentation.palette_set.is_some()
             && state.match_state.match_presentation.sprite_atlas.is_some()
             && state.match_state.match_presentation.overlay_atlas.is_some()

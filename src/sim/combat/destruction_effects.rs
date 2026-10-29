@@ -230,6 +230,7 @@ impl Simulation {
                 crate::sim::anim_class::AnimConstructorInput::Runtime,
                 crate::sim::anim_class::AnimConstructorInput::Preconsumed,
             ),
+            crate::sim::world::FrameEffects::default(),
         ) {
             Ok(anim) => anim,
             Err(error) => {

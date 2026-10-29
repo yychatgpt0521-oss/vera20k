@@ -4480,13 +4480,8 @@ impl TacticalCaptureSession {
         output: &GameRenderOutput,
     ) -> Result<(bool, Value)> {
         validate_loaded_resources(state)?;
-        let unit_atlas = state
-            .match_state
-            .match_presentation
-            .unit_atlas
-            .as_ref()
-            .context("unit atlas absent at final map render")?
-            .statistics()?;
+        let unit_atlas =
+            unit_atlas_statistics(state.match_state.match_presentation.unit_atlas.as_ref())?;
         let ready = output.sidebar_view.is_some()
             && !state.match_state.paused()
             && !state.main_menu_dialog_open()
@@ -4644,9 +4639,26 @@ impl TacticalCaptureSession {
     }
 }
 
+/// A scene with no voxel demand never builds the unit atlas (the builder keeps
+/// its absent `existing` atlas), so its receipt is an atlas with no pages.
+fn unit_atlas_statistics(
+    atlas: Option<&crate::render::unit_atlas::UnitAtlas>,
+) -> Result<crate::render::unit_atlas::UnitAtlasStatistics> {
+    atlas.map_or_else(|| Ok(Default::default()), |atlas| atlas.statistics())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_without_voxels_reports_an_empty_unit_atlas() {
+        assert_eq!(
+            serde_json::to_value(unit_atlas_statistics(None).unwrap()).unwrap(),
+            json!({"resident_sprite_count": 0, "last_build_rasterized_sprite_count": 0,
+                "pages": [], "total_texel_payload_bytes": 0})
+        );
+    }
 
     fn initialized_map() -> MapObservation {
         MapObservation {

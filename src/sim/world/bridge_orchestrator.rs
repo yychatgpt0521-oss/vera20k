@@ -136,6 +136,7 @@ pub(crate) fn damage_at_waypoint(
             ProjectileCoord::new(x.wrapping_add(dx), y.wrapping_add(dy), z),
             100,
             warhead,
+            true,
             (RAD_NO_ATTACKER, None, warhead_id),
             frame_effects,
         );

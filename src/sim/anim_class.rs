@@ -1316,6 +1316,7 @@ impl Simulation {
             descriptor,
             world_coord,
             AnimConstructorInput::Runtime,
+            FrameEffects::default(),
         )
     }
 
@@ -1330,6 +1331,7 @@ impl Simulation {
         rules: &RuleSet,
         anim_type_index: i32,
         waypoint: i32,
+        frame_effects: FrameEffects<'_>,
     ) -> bool {
         let Some(type_name) = rules.anim_type_name_by_index(anim_type_index) else {
             return false;
@@ -1344,7 +1346,13 @@ impl Simulation {
             draw_flags: 0x600,
             ..AnimClassSpawnDescriptor::new(type_id, rx, ry, sub_x, sub_y, level)
         };
-        let Ok(id) = self.spawn_anim_at_world(rules, descriptor, world_coord) else {
+        let Ok(id) = self.spawn_anim_at_world_with_constructor(
+            rules,
+            descriptor,
+            world_coord,
+            AnimConstructorInput::Runtime,
+            frame_effects,
+        ) else {
             return false;
         };
         self.substrate.set_anim_no_effects(id, true);
@@ -1542,6 +1550,7 @@ impl Simulation {
         descriptor: AnimClassSpawnDescriptor,
         world_coord: AnimWorldCoord,
         constructor: AnimConstructorInput,
+        frame_effects: FrameEffects<'_>,
     ) -> Result<AnimId, AnimSpawnError> {
         // Anim42203D assigns before registry insertion and RandomRate4221F5.
         // Death debris may already have constructed at its pick/draw boundary.
@@ -1678,13 +1687,14 @@ impl Simulation {
         // delay-zero constructor-time Start call. A producer's attach then
         // removes the Anim from Display and submits it to Ground again, so
         // Reveal's own submit is left out when nothing before the attach can
-        // read or change Display: Start reaches it only through Middle's
-        // smudge construction.
+        // read or change Display. Start's mineral tail can construct children
+        // and dispatch damage before the producer attaches its receiver.
         let start_reaches_display = descriptor.delay == 0
-            && middle_frame(&config).is_none()
-            && (config.scorch
-                || config.crater
-                || (config.spawns_particle.is_some() && config.num_particles > 0));
+            && (config.tiberium_chain_reaction
+                || (middle_frame(&config).is_none()
+                    && (config.scorch
+                        || config.crater
+                        || (config.spawns_particle.is_some() && config.num_particles > 0))));
         let attaches = descriptor
             .owner
             .is_some_and(|owner| self.anim_owner_coords(owner).is_some());
@@ -1699,7 +1709,7 @@ impl Simulation {
             self.reveal_drop_zone_from_anim(rules, initial_world_coord);
         }
         if descriptor.delay == 0 {
-            self.anim_start(stable_id, &config, rules, None);
+            self.anim_start(stable_id, &config, rules, None, frame_effects);
         }
         if let Some(owner) = descriptor.owner {
             self.set_anim_owner_object(stable_id, Some(owner), rules);
@@ -1960,7 +1970,7 @@ impl Simulation {
             if anim.runtime.delay_remaining > 0 {
                 anim.runtime.delay_remaining -= 1;
                 if anim.runtime.delay_remaining == 0 {
-                    self.anim_start(id, &config, rules, overlay_registry);
+                    self.anim_start(id, &config, rules, overlay_registry, frame_effects);
                 }
                 return false;
             }
@@ -2069,7 +2079,9 @@ impl Simulation {
                     self.destroy_anim(id, rules);
                 }
             }
-            VisitAction::Next(next) => self.switch_anim_type(id, &next, rules, overlay_registry),
+            VisitAction::Next(next) => {
+                self.switch_anim_type(id, &next, rules, overlay_registry, frame_effects)
+            }
         }
         bridge_state_changed
     }
@@ -2154,6 +2166,7 @@ impl Simulation {
             crate::sim::projectile::ProjectileCoord::new(coord.x, coord.y, coord.z),
             whole,
             warhead,
+            true,
             (
                 crate::sim::combat::RAD_NO_ATTACKER,
                 source_house,
@@ -3066,6 +3079,7 @@ impl Simulation {
                     impact,
                     damage,
                     warhead,
+                    true,
                     (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
                     frame_effects,
                 );
@@ -3240,6 +3254,7 @@ impl Simulation {
         config: &AnimTypeRuntimeConfig,
         rules: &RuleSet,
         overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+        frame_effects: FrameEffects<'_>,
     ) {
         let sound_name = self.anim(id).and_then(|anim| {
             (!anim.no_effects())
@@ -3283,6 +3298,166 @@ impl Simulation {
         if middle_frame(config).is_none() {
             self.anim_middle(id, config, rules, overlay_registry);
         }
+
+        // AnimClass::Start424D5F..424EF3, original gamemd instructions:
+        // the constructor reaches this before TAction41's late NoEffects.
+        // Middle may run callbacks, so read the live instance/type again.
+        let Some(type_id) = self
+            .anim(id)
+            .filter(|anim| !anim.no_effects())
+            .map(|anim| anim.type_id())
+        else {
+            return;
+        };
+        if !rules
+            .art()
+            .anim_runtime_config(self.interner.resolve(type_id))
+            .is_some_and(|config| config.tiberium_chain_reaction)
+        {
+            return;
+        }
+        let Some(coord) = self.anim_absolute_coord(id) else {
+            return;
+        };
+        let registry = rules.overlay_registry();
+        let cell = {
+            let Some(terrain) = self.resolved_terrain.as_ref() else {
+                return;
+            };
+            let cells = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain);
+            match crate::sim::movement::ground_pose::query_object_cell(
+                &cells,
+                crate::sim::components::DriveCoord {
+                    x: coord.x,
+                    y: coord.y,
+                    z: coord.z,
+                },
+            ) {
+                receiver @ crate::map::cell_index::NativeCellIdentity::Real(_) => {
+                    let (x, y) = cells.coord(receiver);
+                    (x as u16, y as u16)
+                }
+                crate::map::cell_index::NativeCellIdentity::Dummy => {
+                    if cells.dummy().overlay_fields().0.is_some_and(|overlay| {
+                        registry.flags(overlay).is_some_and(|flags| flags.tiberium)
+                    }) {
+                        log::warn!(
+                            "Anim.Start mineral-bearing shared Dummy mutation is unsupported"
+                        );
+                    }
+                    return;
+                }
+            }
+        };
+        let Some(resource) = self.overlay_grid.as_ref().and_then(|grid| {
+            (cell.0 < grid.width() && cell.1 < grid.height())
+                .then(|| {
+                    crate::sim::tiberium::tiberium_cell_view(
+                        grid,
+                        registry,
+                        &rules.tiberium_types,
+                        cell,
+                    )
+                })
+                .flatten()
+        }) else {
+            return;
+        };
+        // Retain the selected class across removal; the cleared overlay no
+        // longer identifies its Debris or Color (424DAA..424DC0).
+        let mineral = rules
+            .tiberium_types
+            .get(resource.tiberium_type)
+            .expect("resolved mineral type");
+        Self::reduce_tiberium_at_with_native_context(
+            &self.terrain_objects,
+            &self.ore_growth_config,
+            &mut self.ore_growth_state,
+            &self.session,
+            &mut self.scenario_rng,
+            &self.substrate,
+            &mut self.resolved_terrain,
+            &mut self.overlay_grid,
+            &mut self.dirty_cells,
+            cell,
+            i32::from(resource.overlay_data) + 1,
+            rules,
+            Some(registry),
+        );
+        // Reduce480A80 publishes Recalc's caches before the child constructor.
+        // No zone repair belongs to that first Recalc.
+        self.publish_recalculated_cells(rules, &[cell]);
+        let debris = mineral.debris();
+        // 424DDF..424DF3 uses one signed raw draw. Only zero is consumed:
+        // abs(raw % 3)==0 also matches wrapped abs(raw)%3==0 at INT_MIN.
+        if !debris.is_empty() && self.scenario_rng.next_raw_abs_modulo(3) == 0 {
+            if let Some(mut child_coord) = self.anim_absolute_coord(id) {
+                child_coord.z = child_coord.z.wrapping_add(10);
+                let selected = self
+                    .scenario_rng
+                    .next_range_u32_inclusive(0, (debris.len() - 1) as u32)
+                    as usize;
+                let (rx, ry, sub_x, sub_y, level) = child_coord.to_cell_sub_z();
+                let type_name = self.interner.intern(&debris[selected]);
+                let descriptor = AnimClassSpawnDescriptor {
+                    draw_flags: 0x600,
+                    ..AnimClassSpawnDescriptor::new(type_name, rx, ry, sub_x, sub_y, level)
+                };
+                match self.spawn_anim_at_world_with_constructor(
+                    rules,
+                    descriptor,
+                    child_coord,
+                    AnimConstructorInput::Runtime,
+                    frame_effects,
+                ) {
+                    Ok(child) => {
+                        // 424E72..424E95 assigns Convert and retained Cell
+                        // light AFTER all child constructor/Start callbacks.
+                        if let Ok(entry) = u8::try_from(mineral.color_scheme() / 2) {
+                            self.substrate.anims.set_anim_remap(
+                                child,
+                                AnimRemap::ColorScheme(
+                                    crate::rules::house_colors::HouseColorIndex(entry),
+                                ),
+                            );
+                        }
+                        self.retain_anim_cell_light(child, Some(cell));
+                    }
+                    Err(error) => {
+                        log::warn!("Anim.Start mineral Debris failed to construct: {error}")
+                    }
+                }
+            }
+        }
+        // The damage centre is raw Object.Location, whereas the retained Cell
+        // and child above use GetCoords. Zero damage still leaves the suffix.
+        // RESIDUAL: Start returns nothing, so the bridge-change flag is dropped
+        // and a bridge hit here skips that frame's bridge art refresh; only a
+        // TiberiumExplosionDamage above retail's 0 reaches it.
+        if let Some(raw) = self.anim(id).map(|anim| anim.world_coord)
+            && let Some(warhead) = rules.warhead(&rules.bridge_warheads.c4_name)
+        {
+            let warhead_ref = self.interner.intern(&rules.bridge_warheads.c4_name);
+            crate::sim::combat::world_receiver::apply_area_damage(
+                self,
+                rules,
+                Some(registry),
+                crate::sim::projectile::ProjectileCoord::new(raw.x, raw.y, raw.z),
+                rules.combat_damage.tiberium_explosion_damage,
+                warhead,
+                false,
+                (crate::sim::combat::RAD_NO_ATTACKER, None, warhead_ref),
+                frame_effects,
+            );
+        }
+        // Start424EDA/424EE8/424EF3 is a distinct, unconditional second
+        // Recalc -> AssignOrphaned -> hierarchy update, never a second Reduce.
+        if let (Some(grid), Some(terrain)) =
+            (self.overlay_grid.as_mut(), self.resolved_terrain.as_mut())
+        {
+            grid.recalculate_runtime_cell(terrain, registry, cell);
+        }
+        self.publish_cell_and_assign_orphaned_zone(rules, cell, None);
     }
 
     /// `AnimClass::Middle @ 0x00424F00`: marks the ground under the anim.
@@ -3364,6 +3539,7 @@ impl Simulation {
         next: &str,
         rules: &RuleSet,
         overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+        frame_effects: FrameEffects<'_>,
     ) {
         let Some(config) = rules.art().anim_runtime_config(next).cloned() else {
             self.destroy_anim(id, rules);
@@ -3404,7 +3580,7 @@ impl Simulation {
             anim.runtime.first_ai_guard = false;
             anim.runtime.inactive = false;
         }
-        self.anim_start(id, &config, rules, overlay_registry);
+        self.anim_start(id, &config, rules, overlay_registry, frame_effects);
     }
 }
 
@@ -3855,6 +4031,10 @@ mod debris_tests;
 pub(in crate::sim) mod trigger_tests;
 
 #[cfg(test)]
+#[path = "anim_mineral_start_tests.rs"]
+mod mineral_start_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::map::entities::EntityCategory;
@@ -4139,7 +4319,7 @@ mod tests {
                 .unwrap();
             // Native corpus deliberately has type+340=999 and a different
             // retained instance+104. Exercise the real Next type transition.
-            sim.switch_anim_type(id, "A_NEXT", &rules, None);
+            sim.switch_anim_type(id, "A_NEXT", &rules, None, FrameEffects::default());
             assert_eq!(
                 sim.anim(id).unwrap().display.y_sort_adjust,
                 input["adjust"].as_i64().unwrap() as i32
@@ -5109,6 +5289,7 @@ mod tests {
                 descriptor,
                 coord,
                 AnimConstructorInput::Preconsumed(draws),
+                crate::sim::world::FrameEffects::default(),
             )
             .unwrap();
         assert_eq!(sim.anim(id).unwrap().native_unique_id, native_unique_id);
@@ -5143,6 +5324,7 @@ mod tests {
                 first,
                 world,
                 AnimConstructorInput::AssignedIdentity(1_010_001),
+                crate::sim::world::FrameEffects::default(),
             )
             .expect("first authored load Anim");
         let keep_id = sim
@@ -5157,6 +5339,7 @@ mod tests {
                 second,
                 world,
                 AnimConstructorInput::AssignedIdentity(1_010_002),
+                crate::sim::world::FrameEffects::default(),
             )
             .expect("second authored load Anim");
 
@@ -5620,6 +5803,7 @@ mod tests {
                             z: at(2),
                         },
                         AnimConstructorInput::AssignedIdentity(native_id),
+                        crate::sim::world::FrameEffects::default(),
                     )
                     .unwrap();
                 assert_eq!(
@@ -5685,6 +5869,7 @@ mod tests {
                         z: at(2),
                     },
                     AnimConstructorInput::AssignedIdentity(native_id),
+                    crate::sim::world::FrameEffects::default(),
                 )
                 .unwrap()
             });

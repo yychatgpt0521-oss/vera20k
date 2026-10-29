@@ -365,6 +365,11 @@ pub struct ProjectileCollisionPolicy {
     pub inaccurate: bool,
     /// BulletType +295: 48ACF0 multiplies live Rules gravity by binary64 0.5.
     pub floater: bool,
+    /// Phobos `[Projectile] Gravity=` (`BulletTypeExt::GetAdjustedGravity`):
+    /// the type's gravity bits, or `None` for the live Rules value.
+    #[cfg(feature = "phobos")]
+    #[serde(default)]
+    pub gravity: Option<crate::util::native_x87::NativeF64Bits>,
     /// BulletType +2C8, retained as exact binary64 bits for Eq/hash/save.
     pub elasticity_bits: u64,
     /// `BulletTypeClass::Arcing` (`+0x29B`): impact resolution
@@ -385,9 +390,22 @@ impl ProjectileCollisionPolicy {
         airburst: false,
         inaccurate: false,
         floater: false,
+        #[cfg(feature = "phobos")]
+        gravity: None,
         elasticity_bits: 0x3fe8_0000_0000_0000,
         arcing: false,
     };
+
+    /// Phobos `[Projectile] Gravity=` bits, or `None` on the stock path.
+    #[cfg(feature = "phobos")]
+    pub(crate) const fn gravity(&self) -> Option<crate::util::native_x87::NativeF64Bits> {
+        self.gravity
+    }
+
+    #[cfg(not(feature = "phobos"))]
+    pub(crate) const fn gravity(&self) -> Option<crate::util::native_x87::NativeF64Bits> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2226,6 +2244,7 @@ impl ProjectileStore {
                         projectile.velocity,
                         rules_gravity,
                         projectile.collision.floater,
+                        projectile.collision.gravity(),
                     );
                     let candidate = motion.candidate_coord();
                     ordinary_motion = Some(motion);
@@ -2588,19 +2607,24 @@ pub(crate) fn projectile_final_snap_admitted(
         || f64::from(distance) <= (projectile_velocity_magnitude(velocity) * 2.0).max(128.0)
 }
 
-/// Live Rules +16B8, with the Type +295 Floater override (4671B9/48ACF0).
+/// Live Rules +16B8 or the Phobos `[Projectile] Gravity=` bits, with the Type
+/// +295 Floater override (4671B9/48ACF0).
 pub fn projectile_gravity(
     rules_gravity: i32,
+    type_gravity: Option<crate::util::native_x87::NativeF64Bits>,
     floater: bool,
 ) -> crate::util::native_x87::NativeF64Bits {
     use crate::util::native_x87::{NativeF64Bits, X87Chop53};
-    let gravity = X87Chop53::load_i32(rules_gravity);
+    let gravity = match type_gravity {
+        Some(bits) => X87Chop53::load_f64(bits).expect("finite type gravity"),
+        None => X87Chop53::load_i32(rules_gravity),
+    };
     let gravity = if floater {
         X87Chop53::mul(gravity, X87Chop53::load_f64(NativeF64Bits::HALF).unwrap())
     } else {
         gravity
     };
-    X87Chop53::store_f64(gravity).expect("finite Rules gravity")
+    X87Chop53::store_f64(gravity).expect("finite projectile gravity")
 }
 
 /// Ordinary 46718F..467494: live gravity scratch, double coordinate sums,
@@ -2610,12 +2634,17 @@ fn ordinary_motion_candidate(
     velocity: ProjectileVelocity,
     rules_gravity: i32,
     floater: bool,
+    type_gravity: Option<crate::util::native_x87::NativeF64Bits>,
 ) -> ProjectileCollisionMotion {
     use crate::util::native_x87::X87Chop53;
     let mut motion = ProjectileCollisionMotion::from_coordinate(position, velocity);
-    // 4671B9/48ACF0 select live gravity, then 467415/467429
-    // store the subtraction only in the ordinary scratch.
-    let gravity = projectile_gravity(rules_gravity, floater);
+    // 4671B9/48ACF0 select live gravity, then 467415/467429 store the
+    // subtraction only in the ordinary scratch. Phobos
+    // `BulletClass_AI_ApplyGravity` replaces only the 4671B9 FILD: a Floater
+    // shell still drops that value at 4671C3 and calls 48ACF0 (Rules x 0.5),
+    // so its type `Gravity=` never reaches the flight step.
+    let type_gravity = type_gravity.filter(|_| !floater);
+    let gravity = projectile_gravity(rules_gravity, type_gravity, floater);
     motion.velocity[2] = X87Chop53::store_f64(X87Chop53::sub(
         X87Chop53::load_f64(motion.velocity[2]).expect("finite velocity"),
         X87Chop53::load_f64(gravity).expect("finite gravity"),
@@ -2657,6 +2686,7 @@ fn original_ordinary_repeated_live_gravity_preserves_both_coordinate_versions() 
                 velocity,
                 row["gravity_sequence"][frame].as_i64().unwrap() as i32,
                 row["floater"].as_bool().unwrap(),
+                None,
             );
             for (name, values) in [
                 ("bits", motion.velocity),
@@ -2960,6 +2990,29 @@ fn detonation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Phobos `BulletClass_AI_ApplyGravity` (0x4671B9): a type `Gravity`
+    /// replaces the Rules integer in flight, but a Floater shell still takes
+    /// Rules x 0.5 from 0x48ACF0.
+    #[cfg(feature = "phobos")]
+    #[test]
+    fn phobos_type_gravity_drives_flight_except_for_a_floater() {
+        use crate::util::native_x87::NativeF64Bits;
+        let type_gravity = Some(NativeF64Bits::from_bits(12.0f64.to_bits()));
+        let fall = |floater| {
+            let velocity = ProjectileVelocity::from_native([NativeF64Bits::from_bits(0); 3]);
+            let motion = ordinary_motion_candidate(
+                ProjectileCoord::new(0, 0, 0),
+                velocity,
+                6,
+                floater,
+                type_gravity,
+            );
+            f64::from_bits(motion.velocity[2].bits())
+        };
+        assert_eq!(fall(false), -12.0);
+        assert_eq!(fall(true), -3.0);
+    }
 
     fn flat_32_by_32() -> ResolvedTerrainGrid {
         ResolvedTerrainGrid::from_cells(

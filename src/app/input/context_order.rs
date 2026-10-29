@@ -261,8 +261,8 @@ fn object_target_is_legal(
 /// answers 0 there (`0x00700AB7..0x00700AC4`).
 ///
 /// This asks no ROF or reload. Over an object a Foot's shroud rung comes
-/// next ([`Simulation::foot_object_shroud_action`]), then the class
-/// post-processing below. See
+/// next ([`shrouded_object_action`]); so far it is [`base_action`]. Then
+/// the class post-processing below. See
 /// the original DetermineAction/Unit/Foot/Techno and Display action corpus
 /// in tools/spatial_oracle/bunker_attack_action.json.
 ///
@@ -285,8 +285,6 @@ fn object_target_is_legal(
 /// `PermaDisguise=yes`). Trigger: a rules or map layer setting it to no, then
 /// an unforced hover or click over a disguised Spy or Mirage. Effect: VERA
 /// may answer Attack where native's rung refuses and the tail answers.
-///
-/// [`Simulation::foot_object_shroud_action`]: crate::sim::world::Simulation::foot_object_shroud_action
 pub(crate) fn attack_action(
     sim: &crate::sim::world::Simulation,
     rules: &crate::rules::ruleset::RuleSet,
@@ -295,116 +293,16 @@ pub(crate) fn attack_action(
     forced: bool,
     overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
 ) -> AttackAction {
+    let mut action = base_action(sim, rules, actor_id, target, forced, overlay_registry);
     let Some(actor) = sim.entities().get(actor_id) else {
-        return AttackAction::None;
+        return action;
     };
     let Some(kind) = sim.interner().object_type(actor.type_ref(), rules) else {
-        return AttackAction::None;
+        return action;
     };
     let human = sim.house_is_human_player(actor.owner());
     let armed = crate::sim::combat::combat_weapon::is_armed(actor, kind);
     let infiltrator = actor.category() == EntityCategory::Infantry && kind.infiltrate;
-    let admitted = match target {
-        TargetKind::Entity(target_id) => {
-            human
-                && (armed || infiltrator)
-                && (forced
-                    || (friendly_attack_is_admitted(sim, rules, actor_id, *target_id)
-                        && object_target_is_legal(sim, rules, actor_id, *target_id)))
-        }
-        TargetKind::Cell(..) => human,
-    };
-    // TechnoClass::What_Action_OnObject's tail (`0x0070056C..0x007005E6`):
-    // Select over an object the player may select that is not selected,
-    // unless an armed player's object points at another House's, or at its
-    // own loaner. The warp arm (`0x006FFF03..0x006FFF8A`) asks the same
-    // without the target's own warp test (`0x007005CD`).
-    let selects = |target_id: u64, warp_test: bool| {
-        sim.entities().get(target_id).is_some_and(|object| {
-            !(armed && human && object.owner() != actor.owner())
-                && !(actor.is_mission_only() && actor.discovery.owned_by_current_house())
-                && sim.object_is_selectable(target_id, rules)
-                && !object.selection.is_selected()
-                && !(warp_test && object.is_warped_out())
-        })
-    };
-    // An object being warped out (vt+0x1D4) answers before the attack rung:
-    // 0 on a Cell (`0x00700731`; warping in too, `0x00700743`), and over an
-    // object the tail's Select, else 0. A berserk one answers 0 before that
-    // (`0x006FFEC9`). The class tails below still run on the answer; none
-    // turns its 0 into NoMove, as the object is not controllable (vt+0xA0,
-    // `0x00700C40`), but a Building's Cell tail still answers its rally.
-    let warping =
-        actor.is_warped_out() || (actor.is_warping_in() && matches!(target, TargetKind::Cell(..)));
-    let mut action = if warping {
-        match *target {
-            TargetKind::Entity(target_id)
-                if !actor.berserk.is_active() && selects(target_id, false) =>
-            {
-                AttackAction::Select
-            }
-            _ => AttackAction::None,
-        }
-    } else if admitted
-        && (sim.techno_player_controllable(actor_id, rules)
-            || resolved_unit_in_range(
-                sim,
-                actor_id,
-                target,
-                Some(rules),
-                sim.resolved_terrain(),
-                overlay_registry,
-                Some(target),
-            ))
-        && (forced || !shot_is_illegal(sim, rules, actor_id, target, overlay_registry))
-        // Ares3.0 hooks700536/7008D4 ->1004A460/1004A430 leave
-        // this rung for NoManualFire. Keep the original selection/Foot
-        // fallback below; a Unit's rejected object attack becomes NoMove,
-        // whose click still moves near the object. Do not gate CanFire or
-        // received simulation missions: auto-targeting/scripts bypass UI.
-        // RESIDUAL: Infantry's C4 and infiltration arms need this Attack
-        // (`cmp ebp,5` at 0x0051E9F1 and 0x0051EE62), but `infantry_c4_action`
-        // and `infiltrator_capture_orders` decide without it, so a
-        // NoManualFire Tanya or Spy still plants C4 or infiltrates. Only Ares
-        // builds read the key; retail rules never set it. The same holds
-        // for Foot's shroud rung below, which retail reaches: in a campaign
-        // a Tanya, SEAL or Spy over a building whose coordinate is shrouded
-        // still plants C4 or infiltrates where native moves. Rare.
-        && !kind.no_manual_fire()
-    {
-        AttackAction::Attack
-    } else if let TargetKind::Entity(target_id) = *target
-        && selects(target_id, true)
-    {
-        AttackAction::Select
-    } else {
-        AttackAction::None
-    };
-    // Foot's shroud rung (`0x004DDED0`) between Techno's answer and the class
-    // rungs: in a campaign a nonzero answer over an object whose coordinate
-    // the local player's map shrouds (the Map's own shroud, whoever owns the
-    // actor) becomes Move or NoMove, which the Move-action class rungs then
-    // take.
-    if action != AttackAction::None
-        && let TargetKind::Entity(target_id) = *target
-        && let Some(player) = sim.session().current_house()
-        && let Some(shrouded) = sim.foot_object_shroud_action(player, actor_id, target_id, rules)
-    {
-        action = match sim.foot_object_class_action(
-            actor.owner(),
-            actor_id,
-            target_id,
-            shrouded,
-            rules,
-            overlay_registry,
-        ) {
-            crate::sim::world::MoveAction::Move => AttackAction::Move,
-            crate::sim::world::MoveAction::NoMove => AttackAction::NoMove,
-            crate::sim::world::MoveAction::None | crate::sim::world::MoveAction::Harvest => {
-                AttackAction::None
-            }
-        };
-    }
     let healing_unit = actor.category() == EntityCategory::Unit
         && human
         && crate::sim::combat::combat_weapon::weapon_damage_value(
@@ -599,6 +497,175 @@ pub(crate) fn attack_action(
         }
     }
     action
+}
+
+/// [`attack_action`] before the class rungs: Techno's rung and tail and,
+/// over an object, Foot's shroud rung. It is the answer each class
+/// What_Action over an object starts from (Unit `0x0073FD62`, Infantry
+/// `0x0051E44C`, Aircraft `0x00417CD3`), which Infantry's C4 and
+/// infiltration arms test for Attack (`cmp ebp,5` at `0x0051E9F1` and
+/// `0x0051EE62`, [`infantry_arm_attacks`]).
+pub(super) fn base_action(
+    sim: &crate::sim::world::Simulation,
+    rules: &crate::rules::ruleset::RuleSet,
+    actor_id: u64,
+    target: &TargetKind,
+    forced: bool,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+) -> AttackAction {
+    let Some(actor) = sim.entities().get(actor_id) else {
+        return AttackAction::None;
+    };
+    let Some(kind) = sim.interner().object_type(actor.type_ref(), rules) else {
+        return AttackAction::None;
+    };
+    let human = sim.house_is_human_player(actor.owner());
+    let armed = crate::sim::combat::combat_weapon::is_armed(actor, kind);
+    let infiltrator = actor.category() == EntityCategory::Infantry && kind.infiltrate;
+    let admitted = match target {
+        TargetKind::Entity(target_id) => {
+            human
+                && (armed || infiltrator)
+                && (forced
+                    || (friendly_attack_is_admitted(sim, rules, actor_id, *target_id)
+                        && object_target_is_legal(sim, rules, actor_id, *target_id)))
+        }
+        TargetKind::Cell(..) => human,
+    };
+    // TechnoClass::What_Action_OnObject's tail (`0x0070056C..0x007005E6`):
+    // Select over an object the player may select that is not selected,
+    // unless an armed player's object points at another House's, or at its
+    // own loaner. The warp arm (`0x006FFF03..0x006FFF8A`) asks the same
+    // without the target's own warp test (`0x007005CD`).
+    let selects = |target_id: u64, warp_test: bool| {
+        sim.entities().get(target_id).is_some_and(|object| {
+            !(armed && human && object.owner() != actor.owner())
+                && !(actor.is_mission_only() && actor.discovery.owned_by_current_house())
+                && sim.object_is_selectable(target_id, rules)
+                && !object.selection.is_selected()
+                && !(warp_test && object.is_warped_out())
+        })
+    };
+    // An object being warped out (vt+0x1D4) answers before the attack rung:
+    // 0 on a Cell (`0x00700731`; warping in too, `0x00700743`), and over an
+    // object the tail's Select, else 0. A berserk one answers 0 before that
+    // (`0x006FFEC9`). The class tails below still run on the answer; none
+    // turns its 0 into NoMove, as the object is not controllable (vt+0xA0,
+    // `0x00700C40`), but a Building's Cell tail still answers its rally.
+    let warping =
+        actor.is_warped_out() || (actor.is_warping_in() && matches!(target, TargetKind::Cell(..)));
+    let mut action = if warping {
+        match *target {
+            TargetKind::Entity(target_id)
+                if !actor.berserk.is_active() && selects(target_id, false) =>
+            {
+                AttackAction::Select
+            }
+            _ => AttackAction::None,
+        }
+    } else if admitted
+        && (sim.techno_player_controllable(actor_id, rules)
+            || resolved_unit_in_range(
+                sim,
+                actor_id,
+                target,
+                Some(rules),
+                sim.resolved_terrain(),
+                overlay_registry,
+                Some(target),
+            ))
+        && (forced || !shot_is_illegal(sim, rules, actor_id, target, overlay_registry))
+        // Ares3.0 hooks700536/7008D4 ->1004A460/1004A430 leave
+        // this rung for NoManualFire. Keep the original selection/Foot
+        // fallback below; a Unit's rejected object attack becomes NoMove,
+        // whose click still moves near the object. Do not gate CanFire or
+        // received simulation missions: auto-targeting/scripts bypass UI.
+        // Infantry's C4 and infiltration arms ask this Attack too
+        // ([`infantry_arm_attacks`]).
+        && !kind.no_manual_fire()
+    {
+        AttackAction::Attack
+    } else if let TargetKind::Entity(target_id) = *target
+        && selects(target_id, true)
+    {
+        AttackAction::Select
+    } else {
+        AttackAction::None
+    };
+    if action != AttackAction::None
+        && let TargetKind::Entity(target_id) = *target
+        && let Some(shrouded) =
+            shrouded_object_action(sim, rules, actor_id, target_id, overlay_registry)
+    {
+        action = match shrouded {
+            crate::sim::world::MoveAction::Move => AttackAction::Move,
+            crate::sim::world::MoveAction::NoMove => AttackAction::NoMove,
+            crate::sim::world::MoveAction::None | crate::sim::world::MoveAction::Harvest => {
+                AttackAction::None
+            }
+        };
+    }
+    action
+}
+
+/// Foot's shroud rung (`0x004DDED0`) for a nonzero answer over `object`, a
+/// Techno or Terrain object: in a campaign, where the local player's map
+/// shrouds the object's coordinate (the Map's own shroud, whoever owns the
+/// actor), Move or NoMove ([`Simulation::foot_object_shroud_action`]), which
+/// the Move-action class rungs then take
+/// ([`Simulation::foot_object_class_action`]). None where it does not apply.
+/// Techno's key answers ([`object_key_action`]) reach it as its other
+/// answers do ([`base_action`]).
+///
+/// [`Simulation::foot_object_shroud_action`]: crate::sim::world::Simulation::foot_object_shroud_action
+/// [`Simulation::foot_object_class_action`]: crate::sim::world::Simulation::foot_object_class_action
+fn shrouded_object_action(
+    sim: &crate::sim::world::Simulation,
+    rules: &crate::rules::ruleset::RuleSet,
+    actor_id: u64,
+    object: u64,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+) -> Option<crate::sim::world::MoveAction> {
+    let player = sim.session().current_house()?;
+    let shrouded = sim.foot_object_shroud_action(player, actor_id, object, rules)?;
+    let owner = sim.entities().get(actor_id)?.owner();
+    Some(sim.foot_object_class_action(owner, actor_id, object, shrouded, rules, overlay_registry))
+}
+
+/// Whether Infantry's C4 and infiltration arms see Attack over `target_id`
+/// (`cmp ebp,5` at `0x0051E9F1` and `0x0051EE62`): no key rung answers
+/// ([`object_key_action`]; Ctrl+Shift+Alt's Move, as Shift clears Ctrl at
+/// `0x007000AC..0x007000B4`), and the unforced [`base_action`] is Attack, so
+/// they refuse where Techno's rung does (an ILLEGAL shot without the
+/// Infiltrate grant, `NoManualFire=`) or Foot's shroud rung answers Move or
+/// NoMove. Cursor and click ask it alike.
+pub(super) fn infantry_arm_attacks(
+    sim: &crate::sim::world::Simulation,
+    rules: &crate::rules::ruleset::RuleSet,
+    actor_id: u64,
+    target_id: u64,
+    modifier: OrderModifier,
+    force_move_key: bool,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+) -> bool {
+    object_key_action(
+        sim,
+        rules,
+        actor_id,
+        target_id,
+        Some(target_id),
+        modifier,
+        force_move_key,
+    )
+    .is_none()
+        && base_action(
+            sim,
+            rules,
+            actor_id,
+            &TargetKind::Entity(target_id),
+            false,
+            overlay_registry,
+        ) == AttackAction::Attack
 }
 
 /// Whether an Aircraft's 0 over the object `target_id` becomes Attack. The
@@ -1475,7 +1542,8 @@ pub(super) fn selection_can_attack_move(
 }
 
 /// What Techno What_Action_OnObject's key rungs answer
-/// (`0x00700006..0x00700217`), for the cursor and the click alike.
+/// (`0x00700006..0x00700217`), for the cursor and the click alike, as
+/// Foot's shroud rung leaves them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ObjectKeyAction {
     /// Shift's ToggleSelect (8, `0x00700107`). Over a Terrain object, which
@@ -1487,15 +1555,23 @@ pub(super) enum ObjectKeyAction {
     /// Alt's Move (`0x007001E9..0x00700217`), in any chord. Foot
     /// `0x004D74E0` moves the receiver to the object or near it.
     Move,
+    /// Foot's shroud rung's NoMove for any of them ([`shrouded_object_action`]),
+    /// which `0x004D74E0` refuses for a type without `MoveToShroud=`
+    /// (`0x004D77BD..0x004D77EA`).
+    NoMove,
 }
 
-/// The key rungs of `actor_id`'s What_Action over an object: `target` is a
-/// Techno, or None for a Terrain object, which is no ally for the guard rung
-/// (`0x004F9A90` reads its vt+0x3C, TerrainClass's null house). They follow
-/// the berserk exit and warp arm (`0x006FFEC9`, `0x006FFF03`). Shift without
-/// Ctrl answers ToggleSelect for a player's object that is not mission-only
-/// (`0x007000EB..0x00700107`); Alt, Ctrl+Alt and Ctrl+Shift+Alt answer Move
-/// for a player's controllable object (vt+0xA0) once the guard rung refused.
+/// The key rungs of `actor_id`'s What_Action over `object`: `target` is the
+/// object as a Techno, or None for a Terrain object, which is no ally for the
+/// guard rung (`0x004F9A90` reads its vt+0x3C, TerrainClass's null house).
+/// They follow the berserk exit and warp arm (`0x006FFEC9`, `0x006FFF03`).
+/// Shift without Ctrl answers ToggleSelect for a player's object that is not
+/// mission-only (`0x007000EB..0x00700107`); Alt, Ctrl+Alt and Ctrl+Shift+Alt
+/// answer Move for a player's controllable object (vt+0xA0) once the guard
+/// rung refused. In a campaign a Foot's shroud rung then makes any of them
+/// Move or NoMove over an object whose coordinate the player's map shrouds
+/// ([`shrouded_object_action`]); Infantry tests for ToggleSelect only after
+/// it (`0x0051E44C`).
 /// None leaves the later rungs (for a Terrain object, plain, Ctrl and
 /// Ctrl+Shift: [`crate::app::input::cursor::terrain_object_feedback`]). A
 /// selected building's Move over a Terrain object then asks its own factory
@@ -1504,6 +1580,7 @@ pub(super) fn object_key_action(
     sim: &crate::sim::world::Simulation,
     rules: &crate::rules::ruleset::RuleSet,
     actor_id: u64,
+    object: u64,
     target: Option<u64>,
     modifier: OrderModifier,
     force_move_key: bool,
@@ -1513,21 +1590,28 @@ pub(super) fn object_key_action(
         return None;
     }
     let human = sim.house_is_human_player(actor.owner());
-    if modifier == OrderModifier::Shift {
-        return (human && !actor.is_mission_only()).then_some(ObjectKeyAction::ToggleSelect);
-    }
-    if modifier == OrderModifier::GuardArea
-        && target.is_some()
-        && guard_area_admitted(sim, rules, actor_id, target)
-    {
-        return Some(ObjectKeyAction::GuardArea);
-    }
     let alt = matches!(
         modifier,
         OrderModifier::ForceMove | OrderModifier::GuardArea
     ) || (modifier == OrderModifier::AttackMove && force_move_key);
-    (alt && human && sim.techno_player_controllable(actor_id, rules))
-        .then_some(ObjectKeyAction::Move)
+    let action = if modifier == OrderModifier::Shift {
+        (human && !actor.is_mission_only()).then_some(ObjectKeyAction::ToggleSelect)
+    } else if modifier == OrderModifier::GuardArea
+        && target.is_some()
+        && guard_area_admitted(sim, rules, actor_id, target)
+    {
+        Some(ObjectKeyAction::GuardArea)
+    } else {
+        (alt && human && sim.techno_player_controllable(actor_id, rules))
+            .then_some(ObjectKeyAction::Move)
+    }?;
+    Some(
+        match shrouded_object_action(sim, rules, actor_id, object, None) {
+            Some(crate::sim::world::MoveAction::Move) => ObjectKeyAction::Move,
+            Some(_) => ObjectKeyAction::NoMove,
+            None => action,
+        },
+    )
 }
 
 /// Whether What_Action's later rungs over a Terrain object see Ctrl: it sets
@@ -1768,13 +1852,23 @@ fn object_attack_click_command(
         ))
     };
     if modifier == OrderModifier::GuardArea {
-        return if guard_area_admitted(sim, rules, attacker_id, Some(target_id)) {
-            Some(Command::Guard {
+        // The receiver's own key answer ([`object_key_action`]): the guard
+        // rung, else Alt's Move, which Foot's shroud rung may make NoMove.
+        return match object_key_action(
+            sim,
+            rules,
+            attacker_id,
+            target_id,
+            Some(target_id),
+            modifier,
+            force_move_key,
+        ) {
+            Some(ObjectKeyAction::GuardArea) => Some(Command::Guard {
                 entity_id: attacker_id,
                 target: Some(TargetKind::Entity(target_id)),
-            })
-        } else {
-            move_near(crate::sim::world::MoveAction::Move)
+            }),
+            Some(ObjectKeyAction::NoMove) => move_near(crate::sim::world::MoveAction::NoMove),
+            _ => move_near(crate::sim::world::MoveAction::Move),
         };
     }
     // Guard was classified above with hover. Every other receiver asks its
@@ -2078,25 +2172,22 @@ pub(crate) fn try_queue_context_order(
         // Let the selection consumer handle Shift over a visible object;
         // bare ground still reaches its immediate Move. Berserk-only groups
         // keep their native base-action-zero route below.
-        if modifier == OrderModifier::Shift
-            && !selected_ids.is_empty()
-            && hover_object
-                .and_then(|object| object_key_target(object, hover.as_ref()))
-                .is_some_and(|(object, target)| {
-                    cursor_owner(sim, &resources.rules, &current_objects, object).is_some_and(
-                        |owner| {
-                            object_key_action(
-                                sim,
-                                &resources.rules,
-                                owner,
-                                target,
-                                modifier,
-                                force_move_key,
-                            ) == Some(ObjectKeyAction::ToggleSelect)
-                        },
-                    )
-                })
-        {
+        let shift_key_action = hover_object
+            .and_then(|object| object_key_target(object, hover.as_ref()))
+            .filter(|_| modifier == OrderModifier::Shift && !selected_ids.is_empty())
+            .and_then(|(object, target)| {
+                let owner = cursor_owner(sim, &resources.rules, &current_objects, object)?;
+                object_key_action(
+                    sim,
+                    &resources.rules,
+                    owner,
+                    object,
+                    target,
+                    modifier,
+                    force_move_key,
+                )
+            });
+        if shift_key_action == Some(ObjectKeyAction::ToggleSelect) {
             return false;
         }
         // Selection__DispatchMultiUnitOrder clamps the shared Cell first
@@ -2134,6 +2225,22 @@ pub(crate) fn try_queue_context_order(
                 .is_some_and(|target| current_objects == [target.stable_id])
         {
             modifier = OrderModifier::Normal;
+        }
+        // Foot's shroud rung makes Shift's answer Move or NoMove, as it does
+        // Alt's ([`object_key_action`]), and the release dispatches it: each
+        // receiver takes its own, as under Alt. Infantry's Engineer arms
+        // after the rung ignore its answer, so the Engineer prefixes below
+        // run as they do for Alt. The key rungs still see Shift
+        // (`key_modifier`): its rung admits a player's object that is no
+        // loaner, Alt's only one the player may control (vt+0xA0). A
+        // selected building's rungs read the force-move key itself
+        // ([`building_click_orders`]), so its Shift orders nothing.
+        let key_modifier = modifier;
+        if matches!(
+            shift_key_action,
+            Some(ObjectKeyAction::Move | ObjectKeyAction::NoMove)
+        ) {
+            modifier = OrderModifier::ForceMove;
         }
         let shift_click: bool = modifier == OrderModifier::Shift;
         let force_fire: bool = modifier == OrderModifier::ForceFire;
@@ -2337,8 +2444,16 @@ pub(crate) fn try_queue_context_order(
         };
         let terrain_target = hover_terrain.filter(|&terrain| {
             cursor_owner(sim, &resources.rules, &current_objects, terrain).is_none_or(|owner| {
-                object_key_action(sim, &resources.rules, owner, None, modifier, force_move_key)
-                    .is_none()
+                object_key_action(
+                    sim,
+                    &resources.rules,
+                    owner,
+                    terrain,
+                    None,
+                    key_modifier,
+                    force_move_key,
+                )
+                .is_none()
             })
         });
         // Ctrl+Alt over a Terrain object whose key rungs refused still holds
@@ -2539,9 +2654,15 @@ pub(crate) fn try_queue_context_order(
             // Forced Attack uses the same suffix in attack_branch_orders.
             let mut consumed_building_action = false;
             if context_actions_enabled && let Some(target) = hover.as_ref() {
-                if let Some(orders) =
-                    infiltrator_capture_orders(sim, &resources.rules, &mut selected_units, target)
-                {
+                if let Some(orders) = infiltrator_capture_orders(
+                    sim,
+                    &resources.rules,
+                    Some(&resources.overlay_registry),
+                    &mut selected_units,
+                    target,
+                    key_modifier,
+                    force_move_key,
+                ) {
                     consumed_building_action = true;
                     queued.extend(
                         orders
@@ -2566,7 +2687,7 @@ pub(crate) fn try_queue_context_order(
                     &current_objects,
                     &mut selected_units,
                     target,
-                    modifier,
+                    key_modifier,
                     force_move_key,
                     Some(&resources.overlay_registry),
                 )
@@ -2583,16 +2704,31 @@ pub(crate) fn try_queue_context_order(
                 }
             }
 
-            if context_actions_enabled && let Some(target) = hover.as_ref() {
-                let orders =
-                    garrison_entry_orders(sim, &resources.rules, &selected_units, target.stable_id);
+            // The garrison arm runs under Alt too ([`infantry_garrisons`]);
+            // there the other receivers take Alt's Move below.
+            if let Some(target) = hover.as_ref() {
+                let orders = garrison_entry_orders(
+                    sim,
+                    &resources.rules,
+                    &selected_units,
+                    target.stable_id,
+                    key_modifier,
+                    force_move_key,
+                );
                 if !orders.is_empty() {
+                    selected_units.retain(|&id| {
+                        !orders.iter().any(|order| {
+                            matches!(order, Command::CaptureBuilding { engineer_id, .. } if *engineer_id == id)
+                        })
+                    });
                     queued.extend(
                         orders
                             .into_iter()
                             .map(|command| CommandEnvelope::new(owner_id, execute_tick, command)),
                     );
-                    return finish_order(state, queued, speaker_id, rally_announce, None);
+                    if !force_move || selected_units.is_empty() {
+                        return finish_order(state, queued, speaker_id, rally_announce, None);
+                    }
                 }
             }
 
@@ -2602,7 +2738,16 @@ pub(crate) fn try_queue_context_order(
                     .iter()
                     .copied()
                     .filter(|&id| {
-                        infantry_c4_action(sim, &resources.rules, id, target, false)
+                        let attacks = infantry_arm_attacks(
+                            sim,
+                            &resources.rules,
+                            id,
+                            target.stable_id,
+                            key_modifier,
+                            force_move_key,
+                            Some(&resources.overlay_registry),
+                        );
+                        infantry_c4_action(sim, &resources.rules, id, target, attacks)
                             == Some(InfantryC4Action::Sabotage)
                     })
                     .collect();
@@ -2746,34 +2891,36 @@ pub(crate) fn try_queue_context_order(
             // 4D74E0 orders the object or a Cell near it
             // ([`Simulation::object_move_click`]). Rungs that answer first
             // (Self) or rewrite it (the passenger rows, [`entry_orders`]) are
-            // handled above. Others are not asked here (#605): the class
-            // rungs noted above, and Foot's shroud rung
-            // ([`Simulation::foot_object_shroud_action`]), which rewrites the
-            // key rungs' answers too. RESIDUAL: in a campaign, Shift, Alt or
-            // Ctrl+Alt over an object whose coordinate is shrouded keeps its
-            // toggle-select, Move or guard where native answers Move for a
-            // MoveToShroud= receiver, else NoMove (refused by 4D74E0). Rare:
-            // the clicked Cell itself must be open. An enemy the player cannot
-            // see is no object to click, as for the cursor: the Cell under it
-            // takes the click.
-            let force_move_target = hover_object
+            // handled above. The class rungs noted above are not asked here
+            // (#605). In a campaign Foot's shroud rung makes the answer Move
+            // or NoMove, Shift's too ([`object_key_action`]); each receiver
+            // takes its own, and the release dispatches either, so it selects
+            // nothing (`0x004ABE88`). An enemy the player cannot see is no
+            // object to click, as for the cursor: the Cell under it takes the
+            // click.
+            let force_move_object = hover_object
                 .and_then(|object| object_key_target(object, hover.as_ref()))
                 .filter(|&(object, target)| {
                     // A Techno's Ctrl+Alt Move goes through its guard click.
                     (force_move || target.is_none())
                         && cursor_owner(sim, &resources.rules, &current_objects, object)
                             .is_some_and(|owner| {
-                                object_key_action(
-                                    sim,
-                                    &resources.rules,
-                                    owner,
-                                    target,
-                                    modifier,
-                                    force_move_key,
-                                ) == Some(ObjectKeyAction::Move)
+                                matches!(
+                                    object_key_action(
+                                        sim,
+                                        &resources.rules,
+                                        owner,
+                                        object,
+                                        target,
+                                        key_modifier,
+                                        force_move_key,
+                                    ),
+                                    Some(ObjectKeyAction::Move | ObjectKeyAction::NoMove)
+                                )
                             })
-                })
-                .map(|(object, _)| object);
+                });
+            let force_move_target = force_move_object.map(|(object, _)| object);
+            consumed_attack_action |= force_move_target.is_some();
 
             // Scroll693271..69328B gives the same picked object to action
             // and release. Re-picking with an empty viewer for Ctrl lost the
@@ -2928,15 +3075,30 @@ pub(crate) fn try_queue_context_order(
                                     shift_click,
                                 );
                             }
-                            let destination = match force_move_target {
-                                Some(target_id) => {
+                            let destination = match force_move_object {
+                                Some((object, target)) => {
+                                    // The receiver's own key answer.
+                                    let action = match object_key_action(
+                                        sim,
+                                        &resources.rules,
+                                        stable_id,
+                                        object,
+                                        target,
+                                        key_modifier,
+                                        force_move_key,
+                                    ) {
+                                        Some(ObjectKeyAction::NoMove) => {
+                                            crate::sim::world::MoveAction::NoMove
+                                        }
+                                        _ => crate::sim::world::MoveAction::Move,
+                                    };
                                     crate::app::input::commands::object_move_destination(
                                         sim,
                                         &resources.rules,
                                         owner_id,
                                         stable_id,
-                                        target_id,
-                                        crate::sim::world::MoveAction::Move,
+                                        object,
+                                        action,
                                         force_move_key,
                                     )
                                 }
@@ -3086,9 +3248,12 @@ fn self_deploy_is_blocked(
 /// the target is the acting object, exactly one object is selected
 /// (`[0xA8ECC8] == 1`, `0x007000C1`) and its owner is the current player
 /// (`0x007000B9..0x007000DF`). With more selected, a click on one of them
-/// resolves to ACTION_SELECT, which the left-up handler turns into a fresh
-/// selection of the clicked object (`0x004ABE18..`); the caller's friendly-click
-/// path does that.
+/// takes the tail (`0x0070056C..0x007005E6`), whose 0 over a selected object
+/// (`0x007005BF`) a player's Unit or Infantryman turns into NoMove
+/// (`0x007403EB`, `0x0051F05E`), as the cursor shows. NoMove dispatches
+/// (`0x004ABE88`): each receiver asks its own What_Action, the others move
+/// near the clicked one and a Unit refuses itself (`0x007388D5..0x007388E8`),
+/// so the click selects nothing ([`object_click_release`]).
 ///
 /// Shared self-action admission for click and hover. Transport cargo,
 /// factory primary and simple deployment keep their existing owners; the
@@ -3352,31 +3517,60 @@ fn self_action(
     })
 }
 
-/// Garrison orders use the same admission owner as the hover cursor.
-/// Infantry What_Action51E668..51E6B1 answers action9 for an admitted
-/// garrison; Foot ClickedAction4D7716..4D773A sends Capture8 with NULL
-/// Target and the building as Destination. Actual arrival belongs to the
-/// existing Capture/PerCell owners, as for computer occupiers (#1400).
-/// Passenger carriers take [`entry_orders`].
+/// Infantry's garrison arm (`0x0051E668..0x0051E6B1`): `actor_id` may
+/// occupy the `CanBeOccupied=` building `building_id`
+/// ([`crate::sim::passenger::can_enter_transport`]). It ignores Foot's
+/// answer, save Shift's ToggleSelect, which returns first (`0x0051E453`),
+/// and only Ctrl without Shift refuses it (`0x0051E3B0..0x0051E42A`): Alt
+/// and Ctrl+Shift+Alt garrison, Ctrl and Ctrl+Alt do not. Cursor and click
+/// ask it alike.
+pub(super) fn infantry_garrisons(
+    sim: &crate::sim::world::Simulation,
+    rules: &crate::rules::ruleset::RuleSet,
+    actor_id: u64,
+    building_id: u64,
+    modifier: OrderModifier,
+    force_move_key: bool,
+) -> bool {
+    !matches!(
+        modifier,
+        OrderModifier::ForceFire | OrderModifier::GuardArea
+    ) && sim
+        .entities()
+        .get(building_id)
+        .filter(|target| target.category() == EntityCategory::Structure)
+        .and_then(|target| sim.interner().object_type(target.type_ref(), rules))
+        .is_some_and(|object| object.can_be_occupied)
+        && object_key_action(
+            sim,
+            rules,
+            actor_id,
+            building_id,
+            Some(building_id),
+            modifier,
+            force_move_key,
+        ) != Some(ObjectKeyAction::ToggleSelect)
+        && crate::sim::passenger::can_enter_transport(sim, rules, actor_id, building_id)
+}
+
+/// The garrison orders of the `selected` objects [`infantry_garrisons`]
+/// admits: Infantry What_Action answers action 9, and Foot ClickedAction
+/// (`0x004D7716..0x004D773A`) sends Capture8 with NULL Target and the
+/// building as Destination. Actual arrival belongs to the existing
+/// Capture/PerCell owners, as for computer occupiers (#1400). Passenger
+/// carriers take [`entry_orders`].
 fn garrison_entry_orders(
     sim: &crate::sim::world::Simulation,
     rules: &crate::rules::ruleset::RuleSet,
     selected: &[u64],
     building_id: u64,
+    modifier: OrderModifier,
+    force_move_key: bool,
 ) -> Vec<Command> {
-    let garrison = sim
-        .entities()
-        .get(building_id)
-        .filter(|target| target.category() == EntityCategory::Structure)
-        .and_then(|target| sim.interner().object_type(target.type_ref(), rules))
-        .is_some_and(|object| object.can_be_occupied);
-    if !garrison {
-        return Vec::new();
-    }
     selected
         .iter()
         .copied()
-        .filter(|&id| crate::sim::passenger::can_enter_transport(sim, rules, id, building_id))
+        .filter(|&id| infantry_garrisons(sim, rules, id, building_id, modifier, force_move_key))
         .map(|engineer_id| Command::CaptureBuilding {
             engineer_id,
             target_building_id: building_id,
@@ -3384,14 +3578,14 @@ fn garrison_entry_orders(
         .collect()
 }
 
-/// [`Simulation::entry_click_action`] under the base action the modifier and
-/// [`attack_action`] give:
+/// [`Simulation::entry_click_action`] under the base action the key rungs
+/// ([`object_key_action`]) and [`attack_action`] give:
 /// - Shift's ToggleSelect (8) returns first (`0x0051E453`), and Ctrl+Alt's
 ///   GuardArea (0x1A) skips every entry row;
 /// - Alt answers Move (1) first (`0x007001E9`), in the Ctrl+Shift+Alt chord
-///   too, which only the passenger rows take. A player's deployed `Deployer=`
-///   infantryman (Doing 27..30) answers NoMove (2) for it before them
-///   (`0x0051EB81..0x0051EBD7`);
+///   too, which only the passenger rows take, as they take the Move or
+///   NoMove Foot's shroud rung makes of Shift's or Alt's answer in a
+///   campaign;
 /// - otherwise [`attack_action`], forced under Ctrl: Select (7) takes every
 ///   row, and Attack (5) none. Every other answer takes only the passenger
 ///   rows: an armed player's object over another house's object (0,
@@ -3399,6 +3593,16 @@ fn garrison_entry_orders(
 ///   tail for an actor neither armed nor `Infiltrate=`
 ///   (`0x00700444..0x00700474`), so an Engineer's Ctrl over a carrier still
 ///   asks it.
+///
+/// A player's deployed `Deployer=` infantryman (Doing 27..30) answers NoMove
+/// (2) for a Move before the rows (`0x0051EB81..0x0051EBD7`).
+///
+/// RESIDUAL: Ctrl+Alt skips the rows also where its guard rung refuses (an
+/// Aircraft, `0x007001B4..0x007001BA`) and Alt's Move answers, or where the
+/// campaign shroud rung rewrites it; natively the rows that take Alt's Move
+/// take those. Cursor and click skip them alike. Trigger: Ctrl+Alt by an
+/// Aircraft over a friendly object it may enter, or over a shrouded carrier
+/// in a campaign; rare.
 ///
 /// [`Simulation::entry_click_action`]: crate::sim::world::Simulation::entry_click_action
 pub(super) fn entry_action(
@@ -3411,28 +3615,36 @@ pub(super) fn entry_action(
     overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
 ) -> Option<crate::sim::world::EntryClickAction> {
     use crate::sim::world::EntryBaseAction;
-    let base = match modifier {
-        OrderModifier::Shift | OrderModifier::GuardArea => return None,
-        OrderModifier::ForceMove => EntryBaseAction::Other,
-        OrderModifier::AttackMove if force_move_key => EntryBaseAction::Other,
-        OrderModifier::Normal | OrderModifier::AttackMove | OrderModifier::ForceFire => {
-            match attack_action(
-                sim,
-                rules,
-                actor_id,
-                &TargetKind::Entity(target_id),
-                modifier == OrderModifier::ForceFire,
-                overlay_registry,
-            ) {
-                AttackAction::Select => EntryBaseAction::Select,
-                AttackAction::Attack => return None,
-                _ => EntryBaseAction::Other,
-            }
-        }
+    if modifier == OrderModifier::GuardArea {
+        return None;
+    }
+    let key = object_key_action(
+        sim,
+        rules,
+        actor_id,
+        target_id,
+        Some(target_id),
+        modifier,
+        force_move_key,
+    );
+    let (base, moves) = match key {
+        Some(ObjectKeyAction::ToggleSelect | ObjectKeyAction::GuardArea) => return None,
+        Some(ObjectKeyAction::Move) => (EntryBaseAction::Other, true),
+        Some(ObjectKeyAction::NoMove) => (EntryBaseAction::Other, false),
+        None => match attack_action(
+            sim,
+            rules,
+            actor_id,
+            &TargetKind::Entity(target_id),
+            modifier == OrderModifier::ForceFire,
+            overlay_registry,
+        ) {
+            AttackAction::Select => (EntryBaseAction::Select, false),
+            AttackAction::Attack => return None,
+            action => (EntryBaseAction::Other, action == AttackAction::Move),
+        },
     };
-    let alt = modifier == OrderModifier::ForceMove
-        || (modifier == OrderModifier::AttackMove && force_move_key);
-    if alt
+    if moves
         && sim.entities().get(actor_id).is_some_and(|actor| {
             actor.category() == EntityCategory::Infantry
                 && sim.house_is_human_player(actor.owner())
@@ -3551,7 +3763,15 @@ pub(super) fn vehicle_capture_action(
 ) -> bool {
     // Shift and the admitted Ctrl+Alt GuardArea return before51E7A6.
     !matches!(
-        object_key_action(sim, rules, actor, Some(target), modifier, force_move_key),
+        object_key_action(
+            sim,
+            rules,
+            actor,
+            target,
+            Some(target),
+            modifier,
+            force_move_key
+        ),
         Some(ObjectKeyAction::ToggleSelect | ObjectKeyAction::GuardArea)
     ) && sim.ares_vehicle_capture_action(actor, target, rules)
 }
@@ -3737,8 +3957,9 @@ pub(super) enum InfantryC4Action {
     Sabotage,
 }
 
-/// The type-C4 arm of Infantry What_Action51E9C1..51EB21, after the
-/// ordinary enemy-building hover admission. A non-vehicle building
+/// The type-C4 arm of Infantry What_Action51E9C1..51EB21, which needs the
+/// Attack it is handed (`admitted_attack`, `cmp ebp,5` at `0x0051E9F1`):
+/// unforced, [`infantry_arm_attacks`]. A non-vehicle building
 /// terminates this arm even when CanC4/InvisibleInGame leave action Attack;
 /// it must not fall through to the later infiltration arm (51EE54).
 /// Shared by click dispatch and cursor feedback. Rank-granted C4 remains
@@ -3750,7 +3971,7 @@ pub(super) fn infantry_c4_action(
     hover: &HoverTargetKindWithId,
     admitted_attack: bool,
 ) -> Option<InfantryC4Action> {
-    if !admitted_attack && hover.kind != HoverTargetKind::EnemyStructure {
+    if !admitted_attack {
         return None;
     }
     let actor = sim.entities().get(actor_id)?;
@@ -3775,15 +3996,19 @@ pub(super) fn infantry_c4_action(
 }
 
 /// The selected spies whose action over `hover` is Capture
-/// (`Simulation::infiltrator_building_action`): `ClickedAction_Object`
+/// (`Simulation::infiltrator_building_action`), which needs their Attack
+/// there ([`infantry_arm_attacks`]): `ClickedAction_Object`
 /// (0x0051F190) keeps action 9, and `FootClass::ClickedAction_Object`
 /// (0x004D74E0) queues it as it does an Engineer's capture. None when no
 /// selected object takes the arm.
 fn infiltrator_capture_orders(
     sim: &crate::sim::world::Simulation,
     rules: &crate::rules::ruleset::RuleSet,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
     selected: &mut Vec<u64>,
     hover: &HoverTargetKindWithId,
+    modifier: OrderModifier,
+    force_move_key: bool,
 ) -> Option<Vec<Command>> {
     if !matches!(
         hover.kind,
@@ -3794,7 +4019,17 @@ fn infiltrator_capture_orders(
     let mut consumed = false;
     let mut orders = Vec::new();
     selected.retain(|&id| {
-        if infantry_c4_action(sim, rules, id, hover, false).is_some()
+        let attacks = infantry_arm_attacks(
+            sim,
+            rules,
+            id,
+            hover.stable_id,
+            modifier,
+            force_move_key,
+            overlay_registry,
+        );
+        if !attacks
+            || infantry_c4_action(sim, rules, id, hover, attacks).is_some()
             || crate::sim::passenger::can_enter_transport(sim, rules, id, hover.stable_id)
             || !sim.infiltrator_building_action(id, hover.stable_id, rules)
         {
@@ -4848,7 +5083,15 @@ mod tests {
             assert!(sim.infiltrator_building_action(seal, target, &rules));
             let mut selected = vec![seal, spy];
             assert_eq!(
-                infiltrator_capture_orders(&sim, &rules, &mut selected, &hover),
+                infiltrator_capture_orders(
+                    &sim,
+                    &rules,
+                    None,
+                    &mut selected,
+                    &hover,
+                    OrderModifier::Normal,
+                    false,
+                ),
                 Some(vec![Command::CaptureBuilding {
                     engineer_id: spy,
                     target_building_id: target
@@ -4856,7 +5099,21 @@ mod tests {
             );
             assert_eq!(selected, [seal]);
             assert_eq!(
-                infantry_c4_action(&sim, &rules, seal, &hover, false),
+                infantry_c4_action(
+                    &sim,
+                    &rules,
+                    seal,
+                    &hover,
+                    infantry_arm_attacks(
+                        &sim,
+                        &rules,
+                        seal,
+                        target,
+                        OrderModifier::Normal,
+                        false,
+                        None
+                    )
+                ),
                 Some(expected_action)
             );
             assert_eq!(
@@ -4879,9 +5136,26 @@ mod tests {
             stable_id: fold,
         };
         assert!(rules.object("FOLD").unwrap().is_1x1_with_undeploy());
-        assert_eq!(infantry_c4_action(&sim, &rules, seal, &hover, false), None);
+        assert!(infantry_arm_attacks(
+            &sim,
+            &rules,
+            seal,
+            fold,
+            OrderModifier::Normal,
+            false,
+            None
+        ));
+        assert_eq!(infantry_c4_action(&sim, &rules, seal, &hover, true), None);
         assert_eq!(
-            infiltrator_capture_orders(&sim, &rules, &mut vec![seal], &hover),
+            infiltrator_capture_orders(
+                &sim,
+                &rules,
+                None,
+                &mut vec![seal],
+                &hover,
+                OrderModifier::Normal,
+                false,
+            ),
             Some(vec![Command::CaptureBuilding {
                 engineer_id: seal,
                 target_building_id: fold
@@ -5567,6 +5841,384 @@ mod tests {
             click(&sim, tank)
         );
         assert_eq!(click(&sim, legionnaire), None);
+    }
+
+    /// The campaign arena of the test above, with the player's map shrouding
+    /// the coordinate of `target`.
+    fn shrouded_campaign_arena(
+        rules: &crate::rules::ruleset::RuleSet,
+        seed: u64,
+        actors: &[&str],
+        target: (&str, &str),
+    ) -> (Simulation, InternedId, Vec<u64>, u64) {
+        let mut sim = crate::sim::arena_fixture::rival_arena(rules, seed);
+        let owner = sim.interner().get("Americans").unwrap();
+        sim.session_mut_for_test()
+            .set_current_house_for_test(Some(owner));
+        let actors = (0..)
+            .zip(actors)
+            .map(|(dy, kind)| sim.spawn_object(kind, "Americans", 5, 5 + dy, 0, rules))
+            .collect::<Option<Vec<_>>>()
+            .unwrap();
+        let target = sim
+            .spawn_object(target.0, target.1, 10, 10, 0, rules)
+            .unwrap();
+        let centre = sim.object_coords_cell(target).unwrap();
+        *sim.fog_mut_for_test() = crate::sim::vision::FogState::new(32, 32);
+        sim.fog_mut_for_test().reveal_cells_for_owner(
+            owner,
+            (0..32)
+                .flat_map(|y| (0..32).map(move |x| (x, y)))
+                .filter(|&cell| cell != centre),
+        );
+        (sim, owner, actors, target)
+    }
+
+    /// Foot's shroud rung (`0x004DDED0`) rewrites Techno's key answers too.
+    /// Over the player's own Power Plant whose coordinate the map shrouds,
+    /// Shift's ToggleSelect (`0x00700107`), Alt's Move (`0x007001E9`) and
+    /// Ctrl+Alt's GuardArea (`0x007001DD`) become Move for a Grizzly and
+    /// NoMove for a Chrono Legionnaire (`MoveToShroud=no`) in a campaign,
+    /// cursor and click alike: the Ctrl+Alt click moves the Grizzly and the
+    /// Legionnaire's is refused (`0x004D77BD..0x004D77EA`). Outside a
+    /// campaign each chord keeps its own answer.
+    #[test]
+    fn campaign_shroud_rewrites_the_key_chords_over_an_object() {
+        use crate::app::types::CursorFeedbackKind;
+        use crate::sim::scenario_session::ScenarioGameMode;
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let rules = retail.rules;
+        let (mut sim, owner, actors, plant) =
+            shrouded_campaign_arena(&rules, 0x4DDED0, &["MTNK", "CLEG"], ("GAPOWR", "Americans"));
+        let [tank, legionnaire] = actors[..] else {
+            unreachable!()
+        };
+        let overlays = crate::rules::overlay_types::OverlayTypeRegistry::empty();
+        let key = |sim: &Simulation, actor, modifier| {
+            object_key_action(sim, &rules, actor, plant, Some(plant), modifier, false)
+        };
+        let cursor = |sim: &Simulation, actor, modifier| {
+            crate::app::input::cursor::capability_cursor_for_hover(
+                sim,
+                &[actor],
+                Some(actor),
+                &HoverTargetKindWithId {
+                    kind: HoverTargetKind::FriendlyStructure,
+                    stable_id: plant,
+                },
+                Some(&rules),
+                None,
+                modifier,
+                false,
+                false,
+            )
+        };
+        let guard_click = |sim: &Simulation, actor| {
+            object_attack_click_command(
+                sim,
+                &rules,
+                &overlays,
+                owner,
+                OrderMode::Move,
+                OrderModifier::GuardArea,
+                false,
+                actor,
+                plant,
+            )
+        };
+        let chords = [
+            OrderModifier::Shift,
+            OrderModifier::ForceMove,
+            OrderModifier::GuardArea,
+        ];
+
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Skirmish);
+        for (modifier, action, feedback) in [
+            (
+                OrderModifier::Shift,
+                ObjectKeyAction::ToggleSelect,
+                CursorFeedbackKind::Select,
+            ),
+            (
+                OrderModifier::ForceMove,
+                ObjectKeyAction::Move,
+                CursorFeedbackKind::Move,
+            ),
+            (
+                OrderModifier::GuardArea,
+                ObjectKeyAction::GuardArea,
+                CursorFeedbackKind::GuardArea,
+            ),
+        ] {
+            assert_eq!(key(&sim, tank, modifier), Some(action));
+            assert_eq!(cursor(&sim, tank, modifier), feedback);
+        }
+        assert!(matches!(
+            guard_click(&sim, tank),
+            Some(Command::Guard { .. })
+        ));
+
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Campaign);
+        for modifier in chords {
+            assert_eq!(key(&sim, tank, modifier), Some(ObjectKeyAction::Move));
+            assert_eq!(cursor(&sim, tank, modifier), CursorFeedbackKind::Move);
+            assert_eq!(
+                key(&sim, legionnaire, modifier),
+                Some(ObjectKeyAction::NoMove)
+            );
+            assert_eq!(
+                cursor(&sim, legionnaire, modifier),
+                CursorFeedbackKind::Invalid
+            );
+        }
+        assert!(
+            matches!(
+                guard_click(&sim, tank),
+                Some(Command::Move { entity_id, .. } | Command::MoveToObject { entity_id, .. })
+                    if entity_id == tank
+            ),
+            "{:?}",
+            guard_click(&sim, tank)
+        );
+        assert_eq!(guard_click(&sim, legionnaire), None);
+    }
+
+    /// The passenger rows take the Move Foot's shroud rung (`0x004DDED0`)
+    /// makes of Shift's ToggleSelect (`0x00700107`), which otherwise returns
+    /// first (`0x0051E453`): in a campaign a GI's Shift over the player's own
+    /// IFV whose coordinate the map shrouds enters it, cursor and click
+    /// alike. In a skirmish Shift toggles the selection.
+    #[test]
+    fn campaign_shroud_shift_takes_the_passenger_rows() {
+        use crate::app::types::CursorFeedbackKind;
+        use crate::sim::scenario_session::ScenarioGameMode;
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let rules = retail.rules;
+        let (mut sim, _, actors, ifv) =
+            shrouded_campaign_arena(&rules, 0x0051_E453, &["E1"], ("FV", "Americans"));
+        let gi = actors[0];
+        let hover = HoverTargetKindWithId {
+            kind: HoverTargetKind::FriendlyUnit,
+            stable_id: ifv,
+        };
+        let cursor = |sim: &Simulation| {
+            crate::app::input::cursor::capability_cursor_for_hover(
+                sim,
+                &[gi],
+                Some(gi),
+                &hover,
+                Some(&rules),
+                None,
+                OrderModifier::Shift,
+                false,
+                false,
+            )
+        };
+        let click = |sim: &Simulation| {
+            entry_orders(
+                sim,
+                &rules,
+                &[gi],
+                &mut vec![gi],
+                &hover,
+                OrderModifier::Shift,
+                false,
+                None,
+            )
+        };
+
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Skirmish);
+        assert_eq!(cursor(&sim), CursorFeedbackKind::Select);
+        assert_eq!(click(&sim), None);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Campaign);
+        assert_eq!(cursor(&sim), CursorFeedbackKind::Enter);
+        assert_eq!(
+            click(&sim),
+            Some(vec![Command::MegaMission {
+                entity_id: gi,
+                mission: crate::sim::mission::MissionType::Enter,
+                target: None,
+                destination: Some(TargetKind::Entity(ifv)),
+            }])
+        );
+    }
+
+    /// Infantry's C4 and infiltration arms need the Attack Foot's What_Action
+    /// hands them (`cmp ebp,5` at `0x0051E9F1` and `0x0051EE62`). Over an
+    /// enemy Tesla Reactor Ctrl+Shift+Alt answers Move (Shift clears Ctrl at
+    /// `0x007000AC..0x007000B4`, Alt's rung `0x007001E9..0x00700217`), and in
+    /// a campaign the shroud rung (`0x004DDED0`) makes a plain click's Attack
+    /// Move where the map shrouds the reactor's coordinate. Then Tanya
+    /// neither shows Demolish nor plants C4, and the Spy neither shows Enter
+    /// nor infiltrates: both show Move. A plain skirmish click takes both.
+    #[test]
+    fn c4_and_infiltration_need_the_attack_foot_hands_them() {
+        use crate::app::types::CursorFeedbackKind;
+        use crate::sim::scenario_session::ScenarioGameMode;
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let rules = retail.rules;
+        let (mut sim, _, actors, reactor) =
+            shrouded_campaign_arena(&rules, 0x51E9F1, &["TANY", "SPY"], ("NAPOWR", "Russians"));
+        let [tanya, spy] = actors[..] else {
+            unreachable!()
+        };
+        let hover = HoverTargetKindWithId {
+            kind: HoverTargetKind::EnemyStructure,
+            stable_id: reactor,
+        };
+        let check = |sim: &Simulation, modifier, alt, takes_arms| {
+            let cursor = |actor| {
+                crate::app::input::cursor::capability_cursor_for_hover(
+                    sim,
+                    &[actor],
+                    Some(actor),
+                    &hover,
+                    Some(&rules),
+                    None,
+                    modifier,
+                    alt,
+                    false,
+                )
+            };
+            let attacks = infantry_arm_attacks(sim, &rules, tanya, reactor, modifier, alt, None);
+            let c4 = infantry_c4_action(sim, &rules, tanya, &hover, attacks);
+            let infiltrate = infiltrator_capture_orders(
+                sim,
+                &rules,
+                None,
+                &mut vec![spy],
+                &hover,
+                modifier,
+                alt,
+            );
+            if takes_arms {
+                assert_eq!(cursor(tanya), CursorFeedbackKind::Demolish);
+                assert_eq!(c4, Some(InfantryC4Action::Sabotage));
+                assert_eq!(cursor(spy), CursorFeedbackKind::Enter);
+                assert_eq!(
+                    infiltrate,
+                    Some(vec![Command::CaptureBuilding {
+                        engineer_id: spy,
+                        target_building_id: reactor,
+                    }])
+                );
+            } else {
+                for actor in [tanya, spy] {
+                    assert_eq!(cursor(actor), CursorFeedbackKind::Move, "{modifier:?}");
+                }
+                assert_eq!(c4, None, "{modifier:?}");
+                assert_eq!(infiltrate, None, "{modifier:?}");
+            }
+        };
+
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Skirmish);
+        check(&sim, OrderModifier::Normal, false, true);
+        check(&sim, OrderModifier::AttackMove, true, false);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Campaign);
+        check(&sim, OrderModifier::Normal, false, false);
+    }
+
+    /// One of several selected own tanks under the cursor: Techno's self rung
+    /// needs one selected object (`0x007000C1`), so its tail answers 0 over
+    /// the selected tank (`0x007005BF`), which Unit turns into NoMove
+    /// (`0x007403EB`). The cursor is NoMove, and the click dispatches it
+    /// rather than selecting (`0x004ABE88`): the other tank moves near the
+    /// clicked one, which refuses itself (`0x007388D5..0x007388E8`).
+    #[test]
+    fn a_self_click_in_a_larger_selection_dispatches_no_move() {
+        use crate::app::input::cursor::{
+            ActionDistanceTarget, capability_cursor_for_hover, cursor_id_for_feedback,
+            select_best_for_action,
+        };
+        use crate::app::types::CursorId;
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let rules = retail.rules;
+        let mut sim = crate::sim::arena_fixture::rival_arena(&rules, 0x0070_05BF);
+        let owner = sim.interner().get("Americans").unwrap();
+        sim.session_mut_for_test()
+            .set_current_house_for_test(Some(owner));
+        *sim.fog_mut_for_test() = crate::sim::vision::FogState::new(32, 32);
+        sim.fog_mut_for_test()
+            .reveal_cells_for_owner(owner, (0..32).flat_map(|y| (0..32).map(move |x| (x, y))));
+        let other = sim
+            .spawn_object("MTNK", "Americans", 5, 5, 0, &rules)
+            .unwrap();
+        let clicked = sim
+            .spawn_object("MTNK", "Americans", 9, 5, 0, &rules)
+            .unwrap();
+        let selected = [other, clicked];
+        for id in selected {
+            sim.entities_mut_for_test()
+                .get_mut(id)
+                .unwrap()
+                .selection
+                .set_selected_for_test(true);
+        }
+        let overlays = crate::rules::overlay_types::OverlayTypeRegistry::empty();
+        let best = select_best_for_action(
+            &sim,
+            &selected,
+            ActionDistanceTarget::Object(clicked),
+            Some(&rules),
+        );
+        let cursor = capability_cursor_for_hover(
+            &sim,
+            &selected,
+            best,
+            &HoverTargetKindWithId {
+                kind: HoverTargetKind::FriendlyUnit,
+                stable_id: clicked,
+            },
+            Some(&rules),
+            None,
+            OrderModifier::Normal,
+            false,
+            false,
+        );
+        assert_eq!(cursor_id_for_feedback(cursor), Some(CursorId::NoMove));
+        assert_eq!(
+            object_click_release(
+                &sim, &rules, &selected, &selected, clicked, &overlays, false
+            ),
+            LeftRelease::Dispatch
+        );
+        let click = |actor| {
+            object_attack_click_command(
+                &sim,
+                &rules,
+                &overlays,
+                owner,
+                OrderMode::Move,
+                OrderModifier::Normal,
+                false,
+                actor,
+                clicked,
+            )
+        };
+        assert!(
+            matches!(
+                click(other),
+                Some(Command::Move { entity_id, .. } | Command::MoveToObject { entity_id, .. })
+                    if entity_id == other
+            ),
+            "{:?}",
+            click(other)
+        );
+        assert_eq!(click(clicked), None);
     }
 
     /// The Harrier's Cell query under the object (`0x00417D7C..0x00417DCB`)
@@ -6497,7 +7149,8 @@ mod tests {
     /// A click on the selected object itself is its self action only while it
     /// is the one selected object and the local player's
     /// (`TechnoClass::What_Action_OnObject`, `0x007000B9..0x007000DF`); a click
-    /// on one of several selected objects is a plain selection click.
+    /// on one of several selected objects takes the tail instead
+    /// (`a_self_click_in_a_larger_selection_dispatches_no_move`).
     #[test]
     fn self_click_needs_the_one_selected_own_object() {
         let rules =
@@ -6553,8 +7206,12 @@ mod tests {
             click(&[mcv], mcv),
             Some(Command::DeployMcv { entity_id: mcv })
         );
-        assert_eq!(click(&[gi, other_gi], gi), None, "a group click selects");
-        assert_eq!(click(&[mcv, gi], mcv), None, "a group click selects");
+        assert_eq!(
+            click(&[gi, other_gi], gi),
+            None,
+            "a group click takes the tail"
+        );
+        assert_eq!(click(&[mcv, gi], mcv), None, "a group click takes the tail");
         assert_eq!(click(&[gi], other_gi), None, "not the selected object");
         assert_eq!(click(&[enemy_mcv], enemy_mcv), None, "not the player's");
     }
@@ -6636,7 +7293,11 @@ mod tests {
             )
         };
         assert_eq!(click(&[first], first), None, "already primary is Action0");
-        assert_eq!(click(&[first, second], second), None, "a group selects");
+        assert_eq!(
+            click(&[first, second], second),
+            None,
+            "a group takes the tail"
+        );
         assert_eq!(click(&[first], second), None, "not the selected object");
         assert_eq!(
             click(&[foreign], foreign),

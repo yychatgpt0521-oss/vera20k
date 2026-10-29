@@ -236,6 +236,7 @@ impl RocketHost for RocketProcessHost<'_> {
             ProjectileCoord::new(coord[0], coord[1], coord[2]),
             damage,
             warhead_type,
+            true,
             (self.id, None, warhead_ref),
             self.frame_effects,
         );

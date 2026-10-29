@@ -42,22 +42,12 @@ pub fn battle_session(
     opponents: &[(LaunchCountry, AiDifficulty)],
 ) -> SkirmishLaunchSession {
     use crate::skirmish_launch::{
-        LaunchStartPosition, LaunchTeam, PreFillHouseRoster, SkirmishAiSlot, SkirmishLaunchMode,
-        SkirmishLaunchOptions, SkirmishLocalSlot,
+        BATTLE_MODE_ID, LaunchStartPosition, LaunchTeam, PreFillHouseRoster, SkirmishAiSlot,
+        SkirmishLaunchMode, SkirmishLaunchOptions, SkirmishLocalSlot,
     };
 
     SkirmishLaunchSession {
-        mode: SkirmishLaunchMode {
-            class: crate::skirmish_modes::MpModeClass::Battle,
-            id: 1,
-            ui_name_key: "GUI:Battle".to_string(),
-            tooltip_key: "STT:ModeBattle".to_string(),
-            override_file: "MPBattleMD.ini".to_string(),
-            map_filter: "standard".to_string(),
-            random_maps_allowed: true,
-            allies_allowed: true,
-            must_ally: false,
-        },
+        mode: SkirmishLaunchMode::stock(BATTLE_MODE_ID).expect("stock Battle row"),
         selected_map_file: Some(selected_map_file.to_string()),
         humans: vec![crate::skirmish_launch::SkirmishHumanSlot {
             raw_slot_index: Some(0),

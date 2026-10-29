@@ -1175,28 +1175,6 @@ Details: {details}"
             .collect()
     }
 
-    /// Mirror the controller's press/hover state into the per-shell struct the
-    /// render path reads. Slice-2/Slice-3 boundary: render is retired off these in
-    /// Slice 3, after which the controller is the sole authority.
-    fn mirror_shell_controller_to_main_menu(state: &mut AppState) {
-        state
-            .frontend
-            .main_menu_shell_state
-            .pressed_owner_draw_button = state
-            .frontend
-            .shell_controller
-            .pressed()
-            .and_then(crate::ui::main_menu_shell::MainMenuControlId::from_resource_id);
-        state
-            .frontend
-            .main_menu_shell_state
-            .hovered_owner_draw_button = state
-            .frontend
-            .shell_controller
-            .hovered()
-            .and_then(crate::ui::main_menu_shell::MainMenuControlId::from_resource_id);
-    }
-
     pub(super) fn handle_main_menu_shell_mouse_down(state: &mut AppState) {
         let layout = crate::app::frontend::shell_layout::main_menu_layout(state);
         let feed = Self::main_menu_shell_button_feed(&layout);
@@ -1207,7 +1185,6 @@ Details: {details}"
             .ensure_active(crate::ui::shell::descriptor::DialogId(0x00E2), false);
         state.frontend.shell_controller.on_pointer_down(x, y, &feed);
         let pressed = state.frontend.shell_controller.pressed().is_some();
-        Self::mirror_shell_controller_to_main_menu(state);
         // The original plays the button sound on mouse-DOWN over a button (not on
         // release); `pressed` is button-only by construction, so a static never
         // triggers it.
@@ -1225,7 +1202,6 @@ Details: {details}"
             .shell_controller
             .ensure_active(crate::ui::shell::descriptor::DialogId(0x00E2), false);
         state.frontend.shell_controller.on_pointer_move(x, y, &feed);
-        Self::mirror_shell_controller_to_main_menu(state);
         // Every hover message repaints the status line (0x00615EF7).
         state.frontend.shell_status_line.repaint();
     }
@@ -1239,7 +1215,6 @@ Details: {details}"
             .shell_controller
             .ensure_active(crate::ui::shell::descriptor::DialogId(0x00E2), false);
         let activated = state.frontend.shell_controller.on_pointer_up(x, y, &feed);
-        Self::mirror_shell_controller_to_main_menu(state);
         if let Some(action) = activated
             .and_then(crate::ui::main_menu_shell::MainMenuControlId::from_resource_id)
             .map(crate::ui::main_menu_shell::action_for_control)

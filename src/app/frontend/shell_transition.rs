@@ -161,19 +161,20 @@ impl ShellSlideKind {
     pub(crate) fn column(self, rows: u32, page: Option<&MenuPageSpec>) -> SlideColumn {
         let spec = crate::ui::shell::slide::slide_spec_for(self.dialog_id())
             .expect("rendered shell dialog must have a slide column");
+        let page = page.filter(|page| page.dialog == self.dialog_id());
         // WOL's simplified pages must slide only their visible buttons too.
-        let top_buttons = page
-            .filter(|page| page.dialog == self.dialog_id())
-            .map_or_else(
-                || match self {
-                    ShellSlideKind::Options => spec.top_buttons + 1,
-                    ShellSlideKind::VeraOptions => 0,
-                    _ => spec.top_buttons,
-                },
-                |page| page.stacked.len() as u32,
-            );
+        let top_buttons = page.map_or_else(
+            || match self {
+                ShellSlideKind::Options => spec.top_buttons + 1,
+                ShellSlideKind::VeraOptions => 0,
+                _ => spec.top_buttons,
+            },
+            |page| page.stacked.len() as u32,
+        );
         crate::ui::shell::slide::SlideDialogSpec {
             top_buttons,
+            // The online lobby keeps the warning monitor for its top panel.
+            top_panel: spec.top_panel && page.is_none_or(crate::ui::wol_lobby::keeps_top_panel),
             ..spec
         }
         .column(rows)
@@ -726,16 +727,13 @@ impl<'a> ShellLifecycleReducer<'a> {
 pub(crate) fn invalidate_main_menu_dialog_instance(state: &mut AppState) {
     ShellLifecycleReducer::from_state(state).invalidate_main_menu_dialog_instance();
     // A new 0xE2 starts with no press or hover: its status line stays empty
-    // until a hover message arrives from the real cursor position.
-    let menu = &mut state.frontend.main_menu_shell_state;
-    menu.pressed_owner_draw_button = None;
-    menu.hovered_owner_draw_button = None;
-    if state.frontend.shell_controller.top_id() == Some(DialogId(0x00E2)) {
-        state
-            .frontend
-            .shell_controller
-            .reset_to(DialogId(0x00E2), false);
-    }
+    // until a hover message arrives from the real cursor position. The
+    // controller's 0xE2 instance is cleared wherever it sits, under a message
+    // box included.
+    state
+        .frontend
+        .shell_controller
+        .restart_instance(crate::ui::main_menu_shell::MAIN_MENU_DIALOG);
 }
 
 /// Deliver the kind-1 timer only while the bare 0xE2 dialog owns steady paint.
@@ -791,6 +789,10 @@ pub(crate) fn blocks_shell_input(state: &AppState) -> bool {
     // The graceful quit cascade also freezes shell input (the original processes
     // no input during its blocking teardown), so a stray click can't re-enter the
     // menu mid-fade.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+    if state.frontend.browser_exit_pending {
+        return true;
+    }
     state.frontend.quit_cascade.is_some()
         || state.frontend.shell_exit.is_some()
         || transition_blocks_shell_input(state.frontend.shell_first_paint_slide.as_ref())
@@ -799,8 +801,6 @@ pub(crate) fn blocks_shell_input(state: &AppState) -> bool {
         || (state.frontend.screen == crate::ui::game_screen::GameScreen::MainMenu
             && (crate::app::shell_wol::spawned_visit(state)
                 || crate::app::shell_network_setup::external(state)))
-        // A browser external launch that ended waits for the next one.
-        || state.frontend.external_idle
 }
 
 pub(crate) fn transition_blocks_shell_input(transition: Option<&ShellFrameWave>) -> bool {
@@ -1526,9 +1526,13 @@ mod tests {
         assert_eq!((welcome.top_buttons, welcome.bottom_button), (1, true));
         let lobby = crate::ui::wol_lobby::WolLobbyState::new(false, true);
         let column = ShellSlideKind::WolLobby.column(9, Some(lobby.page_spec()));
-        assert_eq!((column.top_buttons, column.bottom_button), (3, true));
+        assert_eq!(
+            (column.top_buttons, column.bottom_button, column.top_panel),
+            (3, true, false)
+        );
         assert_eq!(ShellSlideKind::WolWelcome.column(9, None).top_buttons, 6);
-        assert_eq!(ShellSlideKind::WolLobby.column(9, None).top_buttons, 8);
+        let retail = ShellSlideKind::WolLobby.column(9, None);
+        assert_eq!((retail.top_buttons, retail.top_panel), (8, true));
     }
 
     #[test]

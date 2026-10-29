@@ -1,5 +1,5 @@
 //! VERA HTTPS lobby payloads. These project the existing shell/session owners;
-//! they do not create a second gameplay state. See services/lobby/protocol.md.
+//! they do not create a second gameplay state. See docs/lobby-protocol.md.
 
 use serde::{Deserialize, Serialize};
 

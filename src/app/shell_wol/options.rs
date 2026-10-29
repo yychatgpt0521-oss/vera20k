@@ -27,10 +27,20 @@ pub(crate) struct WolOptionsPage {
 
 pub(crate) fn layout(state: &AppState) -> WolOptionsLayout {
     let (width, height) = shell_layout::shell_screen_size(state);
-    if shell_layout::fills_window(state) {
+    let layout = if shell_layout::fills_window(state) {
         WolOptionsLayout::responsive(width as i32, height as i32)
     } else {
         WolOptionsLayout::new(width as i32, height as i32)
+    };
+    if state
+        .frontend
+        .wol
+        .as_ref()
+        .is_some_and(|visit| visit.modern_ui())
+    {
+        layout.modern()
+    } else {
+        layout
     }
 }
 

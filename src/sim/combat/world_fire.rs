@@ -874,6 +874,7 @@ fn fireat_launch_aim(
             .map(|projectile| LaunchSpeedProjectile {
                 rot: projectile.rot,
                 floater: projectile.floater,
+                gravity: projectile.gravity(),
             })
     };
     let speed = weapon_launch_speed(
@@ -1684,6 +1685,7 @@ pub(super) fn emit_admitted_fire(
             arcing: ballistic,
             gravity: crate::sim::projectile::projectile_gravity(
                 rules.general.gravity,
+                collision.gravity(),
                 collision.floater,
             ),
             high_root: high_arc_root(weapon.lobber, raw_source, current_target_coord),

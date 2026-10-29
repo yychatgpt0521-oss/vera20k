@@ -702,6 +702,7 @@ pub(super) fn ground_strike(
             coordinate,
             general.lightning_damage,
             warhead,
+            true,
             (crate::sim::combat::RAD_NO_ATTACKER, house, warhead_ref),
             frame_effects,
         );

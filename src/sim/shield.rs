@@ -243,6 +243,10 @@ fn can_target_house(
 /// the native Techno receiver, or `None` when no shield owns this hit.
 pub(crate) struct ShieldReceipt {
     pub(crate) remaining: i32,
+    /// The shield took a post-clamp positive hit; Phobos `ShieldClass.cpp`
+    /// 249..255 then exposes the `DecloakDamagedTargets` uncloak to the
+    /// caller before the native receiver body runs.
+    pub(crate) shield_damage_positive: bool,
 }
 
 /// `ShieldClass::ReceiveDamage` (`0x701900+0x6`). `receiver_input` is the
@@ -261,6 +265,7 @@ pub(crate) fn pre_receive_damage(
     }
     Some(ShieldReceipt {
         remaining: result.remaining,
+        shield_damage_positive: result.shield_damage_positive,
     })
 }
 
@@ -307,6 +312,7 @@ fn shield_stage(
 
     // Keep ShieldClass::ReceiveDamage's early returns inside its body. The
     // enclosing hook applies the recovery policy once to the surviving packet.
+    let mut shield_damage_positive = false;
     let shield_return = (|| {
         // `!health || Temporal || damage == 0` returns the damage unchanged.
         let temporal = target.is_warped_out();
@@ -439,6 +445,9 @@ fn shield_stage(
         );
 
         if shield_damage > 0 {
+            // `ShieldClass.cpp:249..255` gates the firer-visible response and
+            // the `DecloakDamagedTargets` uncloak on this post-clamp value.
+            shield_damage_positive = true;
             let residue = shield_damage - state.hp;
             if residue >= 0 {
                 if ty.absorb_over_damage() {
@@ -500,7 +509,14 @@ fn shield_stage(
         warhead,
         restart_armor(&state, ty, warhead, target_type),
     );
-    Some(finish_stage(state, ty, frame, remaining, restart))
+    Some(finish_stage(
+        state,
+        ty,
+        frame,
+        remaining,
+        restart,
+        shield_damage_positive,
+    ))
 }
 
 /// Phobos `ShieldClass::CanBePenetrated`, used by the receive hook at
@@ -566,6 +582,9 @@ fn restart_is_due(
 struct ShieldStageResult {
     state: ShieldState,
     remaining: i32,
+    /// Post-clamp `shieldDamage > 0`: `ShieldClass.cpp:249..255` gates the
+    /// shield owner's `DecloakDamagedTargets` uncloak on it.
+    shield_damage_positive: bool,
 }
 
 /// Finish the stage's state locally; the committing caller writes it back.
@@ -575,11 +594,16 @@ fn finish_stage(
     frame: i32,
     remaining: i32,
     restart: bool,
+    shield_damage_positive: bool,
 ) -> ShieldStageResult {
     if restart {
         restart_recovery_in_combat(&mut state, ty, frame);
     }
-    ShieldStageResult { state, remaining }
+    ShieldStageResult {
+        state,
+        remaining,
+        shield_damage_positive,
+    }
 }
 
 /// The techno armour multiplier `GetCurrentArmorMultiplier` reads for the

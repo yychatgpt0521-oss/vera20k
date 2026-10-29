@@ -186,6 +186,7 @@ impl Simulation {
                 ),
                 rules.general.ion_cannon_damage,
                 warhead,
+                true,
                 (RAD_NO_ATTACKER, None, wh),
                 effects,
             );
@@ -197,6 +198,7 @@ impl Simulation {
             impact,
             rules.general.ion_cannon_damage,
             warhead,
+            true,
             (RAD_NO_ATTACKER, None, wh),
             effects,
         );

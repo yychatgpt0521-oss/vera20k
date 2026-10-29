@@ -1847,6 +1847,7 @@ pub(crate) struct RandomMapEntityProjection {
     high: bool,
     mission: Option<crate::rules::mission_data::MissionType>,
     recruitable: (bool, bool),
+    follows: Option<i32>,
     structure_upgrades: [Option<String>; 3],
 }
 
@@ -1991,6 +1992,7 @@ impl MapLoadInitial {
                     high: entity.high,
                     mission: entity.mission,
                     recruitable: (entity.recruitable_a, entity.recruitable_b),
+                    follows: entity.follows,
                     structure_upgrades: entity.structure_upgrades.clone(),
                 })
                 .collect(),

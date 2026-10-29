@@ -744,6 +744,14 @@ pub fn theater_extension(name: &str) -> Option<&'static str> {
     theater_def(name).map(|def| def.extension)
 }
 
+/// Every active-YR theater as `(name, TMP extension)`, e.g.
+/// `("TEMPERATE", "tem")`, in definition order.
+pub fn theater_names_and_extensions() -> impl Iterator<Item = (&'static str, &'static str)> {
+    THEATER_DEFS
+        .iter()
+        .map(|(name, def)| (*name, def.extension))
+}
+
 /// Look up the theater definition for a theater name (e.g., "TEMPERATE").
 fn theater_def(name: &str) -> Option<&'static TheaterDef> {
     let upper: String = name.to_ascii_uppercase();

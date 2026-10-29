@@ -410,9 +410,7 @@ pub(crate) fn startup_crate_anim_remap_keys(
         let tiberium = overlay_registry
             .tiberium_type_for_overlay(&rules.tiberium_types, overlay_id)
             .and_then(|type_id| rules.tiberium_types.get(type_id))?;
-        let color = tiberium.color.as_deref()?;
-        let entry = crate::rules::color_scheme::scheme_entry_by_name(&rules.color_schemes, color)?;
-        let color = u8::try_from(entry)
+        let color = u8::try_from(tiberium.color_scheme() / 2)
             .ok()
             .map(crate::rules::house_colors::HouseColorIndex)?;
         Some((
@@ -946,14 +944,7 @@ mod tests {
             .tiberium_type_for_overlay(&rules.tiberium_types, overlay_id)
             .and_then(|type_id| rules.tiberium_types.get(type_id))
             .expect("tiberium authority for startup crate CellAnim");
-        assert_eq!(tiberium.color.as_deref(), Some("NeonGreen"));
-        assert_eq!(
-            crate::rules::color_scheme::scheme_entry_by_name(
-                &rules.color_schemes,
-                tiberium.color.as_deref().unwrap(),
-            ),
-            Some(1)
-        );
+        assert_eq!(tiberium.color_scheme(), 3);
 
         assert_eq!(
             startup_crate_anim_remap_keys(&rules, &overlay_registry),

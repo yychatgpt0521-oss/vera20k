@@ -1280,7 +1280,9 @@ impl ShellCaptureRequest {
         match self.checkpoint.movies_target() {
             Some(movies::MoviesTarget::Wol(target)) => !matches!(
                 target,
-                movies::WolTarget::ModernLobby | movies::WolTarget::ModernUsername
+                movies::WolTarget::ModernLobby
+                    | movies::WolTarget::ModernOptions
+                    | movies::WolTarget::ModernUsername
             ),
             Some(movies::MoviesTarget::WolWelcome {
                 provider: crate::app::shell_wol::WolProvider::Unavailable,

@@ -520,6 +520,7 @@ impl Simulation {
             ProjectileCoord::new(at.x, at.y, at.z),
             rules.bridge_rules.strength,
             warhead,
+            true,
             (
                 source.unwrap_or(crate::sim::combat::RAD_NO_ATTACKER),
                 None,

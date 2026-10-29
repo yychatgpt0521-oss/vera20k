@@ -72,6 +72,9 @@ pub(crate) fn paint_wol_options_children(
     let scale = layout.page.scale;
     let chrome = atlas.control_chrome();
     for (index, (checkbox, rect)) in CHECKBOXES.iter().zip(layout.checkboxes).enumerate() {
+        let Some(rect) = rect else {
+            continue;
+        };
         paint_control(
             &mut paint.controls,
             &chrome,

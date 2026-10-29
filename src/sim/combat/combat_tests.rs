@@ -573,7 +573,7 @@ fn gsi_04_05_attack_frame_rules() -> RuleSet {
     let ini = IniFile::from_str(
         "[VehicleTypes]\n0=SOURCE\n1=PROTECTED\n\
          [BuildingTypes]\n0=NORMAL\n1=MOD1X1\n2=STOCK2X2\n3=SELFNO\n4=SELFYES\n5=IMMUNE\n6=PROTECTEDBLDG\n\
-         [Warheads]\n0=HITWH\n\
+         [Warheads]\n0=HITWH\n1=SELFWH\n\
          [SOURCE]\nStrength=100\nArmor=heavy\n\
          [PROTECTED]\nStrength=100\nArmor=heavy\nToProtect=yes\n\
          [NORMAL]\nStrength=100\nArmor=wood\n\
@@ -583,7 +583,8 @@ fn gsi_04_05_attack_frame_rules() -> RuleSet {
          [SELFYES]\nStrength=100\nArmor=wood\nDamageSelf=yes\n\
          [IMMUNE]\nStrength=100\nArmor=wood\nImmune=yes\n\
          [PROTECTEDBLDG]\nStrength=100\nArmor=wood\nToProtect=yes\n\
-         [HITWH]\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n",
+         [HITWH]\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n\
+         [SELFWH]\nAllowDamageOnSelf=yes\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n",
     );
     let art = IniFile::from_str(
         "[NORMAL]\nFoundation=2x2\n\
@@ -759,6 +760,26 @@ fn gsi_04_05_building_attack_frame_prelude_obeys_object_and_type_gates() {
     let unit = EntityDamageEvent::area(7, 10, 0, 1, Some(source_owner), wh);
     apply_building_receive_prelude(&unit, &entities, &rules, &interner, &mut houses, 47);
     assert_eq!(frame(&houses), i32::MIN + 1, "the wrapper is Building-only");
+
+    // Phobos `BuildingClass_ReceiveDamage_DamageSelf @ 0x0044224F` skips the
+    // `0x00442262` self return when the warhead admits the firer.
+    #[cfg(feature = "phobos")]
+    {
+        let allow_wh = interner.intern("SELFWH");
+        let allow_self = EntityDamageEvent::area(5, 10, 0, 5, Some(victim_owner), allow_wh);
+        assert_eq!(
+            apply_building_receive_prelude(
+                &allow_self,
+                &entities,
+                &rules,
+                &interner,
+                &mut houses,
+                50,
+            ),
+            BuildingReceivePrelude::Respond,
+            "DamageSelf=no building admits its own AllowDamageOnSelf warhead"
+        );
+    }
 }
 
 #[test]
@@ -9097,6 +9118,7 @@ fn retail_area_damage_delivers_miner_warning_before_neighboring_base_warning() {
         crate::sim::projectile::ProjectileCoord::new(position.x, position.y, position.z),
         weapon.damage,
         warhead,
+        true,
         (source, Some(source_owner), warhead_id),
         effects,
     );
@@ -10938,6 +10960,7 @@ fn gsi_08_06_point_blank_shot_clamps_the_launch_speed_to_half_the_distance() {
         Some(crate::sim::projectile::launch::LaunchSpeedProjectile {
             rot: 0,
             floater: false,
+            gravity: None,
         }),
         200,
         crate::sim::projectile::launch::fireat_launch_distance(

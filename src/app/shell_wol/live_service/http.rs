@@ -3,6 +3,7 @@
 
 use crate::util::time::{Duration, Instant};
 use base64::Engine;
+use std::collections::VecDeque;
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")))]
 use std::io::Read;
 use std::path::PathBuf;
@@ -82,6 +83,51 @@ pub(super) enum Request {
     },
 }
 
+impl Request {
+    /// The periodic requests a waiting copy already covers: the host's 5 s
+    /// `ping`, the 10 s relay renewal retry and the welcome page's stats.
+    fn repeats(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stats, Self::Stats) => true,
+            (
+                Self::Command {
+                    operation, payload, ..
+                },
+                Self::Command {
+                    operation: other_operation,
+                    payload: other_payload,
+                    ..
+                },
+            ) => {
+                matches!(*operation, "ping" | "renew_relay")
+                    && operation == other_operation
+                    && payload == other_payload
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Queues what arrived during the last request behind `queued`, without a
+/// periodic request that `current` or a queued one repeats. A failing command
+/// takes about 24 s, so copies would otherwise pile up ahead of Ready, Start
+/// and chat for as long as the lobby is unreachable.
+fn queue_arrivals(
+    input: &Receiver<Request>,
+    current: Option<&Request>,
+    queued: &mut VecDeque<Request>,
+) {
+    while let Ok(request) = input.try_recv() {
+        if !current
+            .into_iter()
+            .chain(queued.iter())
+            .any(|waiting| waiting.repeats(&request))
+        {
+            queued.push_back(request);
+        }
+    }
+}
+
 pub(super) enum Response {
     MapUploadPrepared {
         transfer: u64,
@@ -123,8 +169,16 @@ pub(super) enum Response {
         attempt: u64,
         code: u32,
     },
+    /// HTTP 426 to a sign-in: the lobby no longer admits this version.
+    /// `message` is the lobby's own reason when it gave a plain one.
     UpgradeRequired {
         attempt: u64,
+        message: Option<String>,
+    },
+    /// HTTP 426 to a signed-in request: the lobby was upgraded during this
+    /// session. Only the refused request failed.
+    Outdated {
+        message: Option<String>,
     },
     Channels(ChannelList),
     Stats(crate::ui::wol_shell::WolLobbyStats),
@@ -140,8 +194,14 @@ pub(super) enum Response {
     },
     Failure(&'static str),
     Offline,
+    /// The first event poll of an outage failed; polling keeps retrying.
+    LobbyUnreachable,
+    /// An event poll succeeded again after `LobbyUnreachable`.
+    LobbyReachable,
     StartRejected {
         id: u64,
+        /// 429, 5xx or no answer: the lobby, not the setup, refused it.
+        retryable: bool,
     },
     Translated {
         id: u64,
@@ -161,13 +221,21 @@ const MAX_BODY_BYTES: u64 = 1024 * 1024;
 // The server retains1024 events and returns at most256 at a time. Permit
 // concurrent arrivals too, but never release cleanup on a partial history.
 const MAX_CLEANUP_DRAIN_BATCHES: usize = 8;
+// About three lines of the 0xD0 box body, which also holds the download link.
+const MAX_UPGRADE_MESSAGE_CHARS: usize = 160;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RequestFailure {
     Status(u16),
     LostCursor,
-    ChannelRejected { status: u16, code: u32 },
+    ChannelRejected {
+        status: u16,
+        code: u32,
+    },
     AlreadyFinished,
+    /// 426 `upgrade_required` (docs/lobby-protocol.md), with the lobby's
+    /// message when it is one short line of plain text.
+    UpgradeRequired(Option<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,23 +275,36 @@ impl RequestFailure {
                 code: 0x8004_0070,
             },
             Some("unknown_match") if status == 409 => Self::AlreadyFinished,
+            _ if status == 426 => Self::UpgradeRequired(
+                value
+                    .as_ref()
+                    .and_then(|value| value["error"]["message"].as_str())
+                    .map(str::trim)
+                    .filter(|message| {
+                        !message.is_empty()
+                            && message.chars().count() <= MAX_UPGRADE_MESSAGE_CHARS
+                            && !message.chars().any(char::is_control)
+                    })
+                    .map(str::to_owned),
+            ),
             _ => Self::Status(status),
         }
     }
 
-    fn command_failure(self, operation: &str) -> CommandFailure {
+    fn command_failure(&self, operation: &str) -> CommandFailure {
         match self {
             Self::AlreadyFinished if operation == "finish" => CommandFailure::AlreadyFinished,
-            Self::ChannelRejected { code, .. } => CommandFailure::Rejected(code),
+            Self::ChannelRejected { code, .. } => CommandFailure::Rejected(*code),
             _ if matches!(self.status(), 0 | 429 | 500..=599) => CommandFailure::Retryable,
             _ => CommandFailure::Rejected(0x8000_4005),
         }
     }
 
-    fn status(self) -> u16 {
+    fn status(&self) -> u16 {
         match self {
-            Self::Status(status) | Self::ChannelRejected { status, .. } => status,
+            Self::Status(status) | Self::ChannelRejected { status, .. } => *status,
             Self::LostCursor | Self::AlreadyFinished => 409,
+            Self::UpgradeRequired(_) => 426,
         }
     }
 }
@@ -336,7 +417,7 @@ impl Client {
                 concat!("VERA20k/", env!("CARGO_PKG_VERSION"), " multiplayer-client"),
             );
             if path == "/v1/sessions" {
-                // Its relay CONFIRM carries a federation roster; see services/lobby.
+                // Its relay CONFIRM carries a federation roster; see docs/lobby-protocol.md.
                 request = request.header("Vera-Relay-Federation", "1");
             }
             if let Some(token) = &self.token {
@@ -465,6 +546,12 @@ macro_rules! serial_driver {
     ($($asynchronous:tt)?) => {
         impl Client {
     $($asynchronous)? fn session_failed(&mut self, error: RequestFailure, output: &Sender<Response>) -> bool {
+        if let RequestFailure::UpgradeRequired(message) = error {
+            // The lobby keeps serving an outdated session's events, finish,
+            // leave and logout (docs/lobby-protocol.md), so it stays.
+            let _ = output.send(Response::Outdated { message });
+            return false;
+        }
         if error == RequestFailure::LostCursor
             && let Some(match_id) = self.active_match.clone()
         {
@@ -518,11 +605,17 @@ macro_rules! serial_driver {
     ) -> Duration {
         match result {
             Ok(()) => {
+                if *failed_polls > 0 {
+                    let _ = output.send(Response::LobbyReachable);
+                }
                 *failed_polls = 0;
                 Duration::from_secs(1)
             }
-            Err(error) if platform_await!(self.session_failed(error, output)) => Duration::from_secs(30),
+            Err(error) if platform_await!(self.session_failed(error.clone(), output)) => Duration::from_secs(30),
             Err(_) => {
+                if *failed_polls == 0 {
+                    let _ = output.send(Response::LobbyUnreachable);
+                }
                 *failed_polls = failed_polls.saturating_add(1);
                 Duration::from_secs((1u64 << (*failed_polls).min(5)).min(30))
             }
@@ -555,14 +648,19 @@ macro_rules! serial_driver {
     let stopping = Arc::clone(&client.stopping);
     let mut failed_polls = 0_u8;
     let mut next_poll = Instant::now();
+    let mut queued = VecDeque::new();
     loop {
         if stopping.load(Ordering::Acquire) {
             break;
         }
-        let request = match platform_await!(next_request(&input)) {
-            Ok(request) => request,
-            Err(()) => break,
+        let request = match queued.pop_front() {
+            Some(request) => Some(request),
+            None => match platform_await!(next_request(&input)) {
+                Ok(request) => request,
+                Err(()) => break,
+            },
         };
+        queue_arrivals(&input, request.as_ref(), &mut queued);
         if stopping.load(Ordering::Acquire) {
             break;
         }
@@ -637,7 +735,7 @@ macro_rules! serial_driver {
                     Err(RequestFailure::Status(400))
                 };
                 if let Err(error) = result.as_ref() {
-                    platform_await!(client.session_failed(*error, &output));
+                    platform_await!(client.session_failed(error.clone(), &output));
                 }
                 let response = match result {
                     Ok(value) => {
@@ -697,7 +795,7 @@ macro_rules! serial_driver {
                     .request("/v1/commands", Some(&body)))
                     .and_then(|value| client.batch(value, &output));
                 if let Err(error) = result.as_ref() {
-                    platform_await!(client.session_failed(*error, &output));
+                    platform_await!(client.session_failed(error.clone(), &output));
                 }
                 let response = match result {
                     Ok(()) => Response::MapUploaded {
@@ -762,8 +860,8 @@ macro_rules! serial_driver {
                             code: 0x8004_0064,
                         });
                     }
-                    Err(RequestFailure::Status(426)) => {
-                        let _ = output.send(Response::UpgradeRequired { attempt });
+                    Err(RequestFailure::UpgradeRequired(message)) => {
+                        let _ = output.send(Response::UpgradeRequired { attempt, message });
                     }
                     Err(_) => {
                         let _ = output.send(Response::LoginFailed { attempt, code: 0 });
@@ -836,7 +934,7 @@ macro_rules! serial_driver {
                     result
                 };
                 let completed = result.is_ok();
-                if let Err(error) = result {
+                if let Err(error) = &result {
                     // Static operation names and numeric status only: request
                     // bodies, headers and transport errors can carry secrets.
                     log::warn!(
@@ -852,10 +950,14 @@ macro_rules! serial_driver {
                         let _ = output.send(Response::CommandCompleted { id, operation });
                     }
                     Err(error)
-                        if !platform_await!(client.session_failed(error, &output)) && operation != "renew_relay" =>
+                        if !platform_await!(client.session_failed(error.clone(), &output)) && operation != "renew_relay" =>
                     {
                         let _ = output.send(if operation == "start" {
-                            Response::StartRejected { id }
+                            Response::StartRejected {
+                                id,
+                                retryable: error.command_failure(operation)
+                                    == CommandFailure::Retryable,
+                            }
                         } else {
                             Response::CommandFailed {
                                 id,
@@ -1019,6 +1121,8 @@ mod tests {
             client.poll_finished(Err(RequestFailure::Status(0)), &mut failures, &output),
             Duration::from_secs(2)
         );
+        // One status line when the outage begins and one when it ends.
+        assert!(matches!(input.try_recv(), Ok(Response::LobbyUnreachable)));
         assert_eq!(
             client.poll_finished(Err(RequestFailure::Status(503)), &mut failures, &output),
             Duration::from_secs(4)
@@ -1036,11 +1140,48 @@ mod tests {
             Duration::from_secs(1)
         );
         assert_eq!(failures, 0);
+        assert!(matches!(input.try_recv(), Ok(Response::LobbyReachable)));
+        client.poll_finished(Ok(()), &mut failures, &output);
+        assert!(input.try_recv().is_err());
         client.poll_finished(Err(RequestFailure::Status(401)), &mut failures, &output);
         assert!(client.token.is_none());
         assert!(matches!(input.try_recv(), Ok(Response::Offline)));
         assert!(client.session_failed(RequestFailure::Status(401), &output));
         assert!(input.try_recv().is_err());
+    }
+
+    #[test]
+    fn periodic_requests_do_not_pile_up_behind_a_timing_out_command() {
+        let (requests, input) = std::sync::mpsc::channel();
+        let command = |id, operation, payload| Request::Command {
+            id,
+            operation,
+            payload,
+        };
+        let renew = |id, match_id| command(id, "renew_relay", json!({"match_id":match_id}));
+        for request in [
+            command(2, "ready", json!({"ready":true})),
+            command(3, "ping", json!({})),
+            renew(4, "a"),
+            Request::Stats,
+            renew(5, "a"),
+            renew(6, "b"),
+            Request::Stats,
+            command(7, "chat", json!({"text":"gg"})),
+            command(8, "chat", json!({"text":"gg"})),
+        ] {
+            requests.send(request).unwrap();
+        }
+        let mut queued = VecDeque::new();
+        queue_arrivals(&input, Some(&command(1, "ping", json!({}))), &mut queued);
+        let ids: Vec<_> = queued
+            .iter()
+            .map(|request| match request {
+                Request::Command { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, [Some(2), Some(4), None, Some(6), Some(7), Some(8)]);
     }
 
     #[test]
@@ -1064,7 +1205,7 @@ mod tests {
             409,
             br#"{"error":{"code":"history_expired","message":"Sign in again."}}"#,
         );
-        client.poll_finished(Err(expired), &mut 0, &output);
+        client.poll_finished(Err(expired.clone()), &mut 0, &output);
         assert!(client.token.is_none());
         assert_eq!(client.cursor, 19);
         assert!(matches!(input.try_recv(), Ok(Response::Offline)));
@@ -1075,6 +1216,44 @@ mod tests {
             RequestFailure::response(409, br#"{"error":{"code":"invalid_cursor"}}"#),
             RequestFailure::LostCursor
         );
+    }
+
+    #[test]
+    fn update_refusal_keeps_only_a_plain_lobby_reason_and_the_session() {
+        let reason = "Online play needs VERA20k 0.3.0 or newer.";
+        let refused = |message: &str| {
+            let body = json!({"error":{"code":"upgrade_required","message":message}});
+            RequestFailure::response(426, body.to_string().as_bytes())
+        };
+        let longest = "x".repeat(MAX_UPGRADE_MESSAGE_CHARS);
+        assert_eq!(
+            refused(&longest),
+            RequestFailure::UpgradeRequired(Some(longest.clone()))
+        );
+        let too_long = format!("{longest}x");
+        for unusable in [too_long.as_str(), "Update.\r\n[Ask]", "  "] {
+            assert_eq!(refused(unusable), RequestFailure::UpgradeRequired(None));
+        }
+        assert_eq!(
+            RequestFailure::response(426, b"not json"),
+            RequestFailure::UpgradeRequired(None)
+        );
+
+        let (output, input) = std::sync::mpsc::channel();
+        let mut client = Client {
+            stopping: Arc::new(AtomicBool::new(false)),
+            agent: ureq::Agent::new_with_defaults(),
+            base: String::new(),
+            token: Some("synthetic-test-session".to_owned()),
+            cursor: 19,
+            active_match: None,
+        };
+        assert!(!client.session_failed(refused(reason), &output));
+        assert!(client.token.is_some());
+        assert!(matches!(
+            input.try_recv(),
+            Ok(Response::Outdated { message: Some(message) }) if message == reason
+        ));
     }
 
     #[test]

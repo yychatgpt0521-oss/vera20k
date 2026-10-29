@@ -615,6 +615,7 @@ impl Simulation {
             blast.location,
             blast.damage,
             warhead,
+            true,
             origin,
             frame_effects,
         );
@@ -654,6 +655,7 @@ impl Simulation {
             blast.location,
             blast.damage,
             warhead,
+            true,
             origin,
         );
         effects.bridge_state_changed |=

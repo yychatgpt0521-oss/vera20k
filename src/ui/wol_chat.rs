@@ -12,6 +12,7 @@
 //! `g_MuteSWLaunches` label is wrong), and the connection nodes
 //! `[0xA8DA78]`; it refuses pages only from a match.
 
+use crate::ui::wol_options::WolPreferences;
 use crate::util::native_string::wcs_starts_with_ignore_case;
 
 /// The localized command words the parser compares against.
@@ -264,6 +265,21 @@ pub(crate) struct WolDisplayFilters {
     pub(crate) clan: bool,
 }
 
+impl WolDisplayFilters {
+    /// The live preferences the sinks read. The modern pages hide the
+    /// language, buddy and clan boxes, so a filter saved earlier could hide
+    /// chat with no way to undo it: they read all four as showing every line.
+    /// The retail pages read them as saved.
+    pub(crate) fn new(preferences: &WolPreferences, modern: bool) -> Self {
+        Self {
+            latin: preferences.display_latin != 0 || modern,
+            asian: preferences.display_asian != 0 || modern,
+            buddies: preferences.display_buddies && !modern,
+            clan: preferences.display_clan && !modern,
+        }
+    }
+}
+
 /// The language gate inlined in every chat, action and page sink (its
 /// out-of-line copy is `0x0077D2E0`): an operator, or a running setup
 /// C2/C9, always passes; otherwise Latin-1 text (`0x007B7D90`: every unit
@@ -442,6 +458,26 @@ mod tests {
         assert!(buddy_clan_gate(&tanya, Some(""), &[], both, true));
         assert!(buddy_clan_gate(&boris, Some("BLUE"), &friend, both, true));
         assert!(!buddy_clan_gate(&boris, Some("BLUE"), &[], both, true));
+    }
+
+    #[test]
+    fn saved_filters_hide_no_chat_on_the_modern_pages() {
+        let saved = WolPreferences {
+            display_asian: 0,
+            display_latin: 0,
+            display_buddies: true,
+            ..WolPreferences::default()
+        };
+        let tanya = sender("Tanya", "", false);
+        let passes = |modern, text: &str| {
+            let filters = WolDisplayFilters::new(&saved, modern);
+            language_gate(&tanya, false, &w(text), filters)
+                && buddy_clan_gate(&tanya, Some(""), &[], filters, true)
+        };
+        for text in ["hi", "\u{4f60}"] {
+            assert!(passes(true, text), "{text}");
+            assert!(!passes(false, text), "{text}");
+        }
     }
 
     #[test]
