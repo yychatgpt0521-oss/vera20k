@@ -21,8 +21,8 @@
 //! - Part of render/ — depends on assets/ (SHP/Palette), render/batch (GPU upload).
 //! - Reads from sim/ via EntityStore iteration (GameEntity fields).
 
-use std::collections::{HashMap, HashSet};
 use crate::util::time::Instant;
+use std::collections::{HashMap, HashSet};
 
 use crate::assets::asset_manager::AssetManager;
 use crate::assets::mix_archive::SharedBytes;
@@ -1366,6 +1366,9 @@ pub(crate) enum SpritePaletteChoice {
     /// The selected successfully loaded extra building palette for the
     /// active theater (`RuleSet::load_extra_building_palette`).
     ExtraBuilding,
+    /// The animation type's loaded Ares `CustomPalette=` file.
+    #[cfg(feature = "ares")]
+    AnimCustom,
 }
 
 /// Pick the palette a sprite key's frames are baked against.
@@ -1381,6 +1384,28 @@ pub(crate) enum SpritePaletteChoice {
 ///
 /// Types with no art entry keep the previous behaviour, so non-animation art
 /// (units, infantry, structures) is unaffected.
+/// The Ares `[Anim] CustomPalette=` file an ordinary AnimClass draw of `key`
+/// bakes against, with `~~~` replaced by the theater extension.
+/// RESIDUAL: a house-remapped (cell drawer) animation keeps its scheme.
+#[cfg(feature = "ares")]
+fn anim_custom_palette_file(
+    key: &ShpSpriteKey,
+    art: Option<&ArtRegistry>,
+    theater_ext: &str,
+) -> Option<String> {
+    if key.palette_context != ShpPaletteContext::GlobalAnim {
+        return None;
+    }
+    // AnimClass_Draw_SetPalette (hook 4232CE -> 1000ACE0) swaps only the
+    // ANIM.PAL convert; AltPalette's scheme 0 (4232D8) still replaces it.
+    let config = art?.anim_runtime_config(&key.type_id)?;
+    let file = config
+        .custom_palette
+        .as_deref()
+        .filter(|_| !config.alt_palette)?;
+    Some(file.replacen("~~~", theater_ext, 1).to_ascii_lowercase())
+}
+
 pub(crate) fn sprite_palette_choice(
     type_id: &str,
     art: Option<&ArtRegistry>,
@@ -2505,9 +2530,31 @@ pub(crate) fn prepare_sprite_atlas(
             });
         }
     }
+    #[cfg(feature = "ares")]
+    let anim_custom_file = |key: &ShpSpriteKey| anim_custom_palette_file(key, art, theater_ext);
+    #[cfg(feature = "ares")]
+    let mut anim_custom_palettes: HashMap<String, Option<Palette>> = HashMap::new();
+    #[cfg(feature = "ares")]
+    for file in new_keys.iter().filter_map(anim_custom_file) {
+        anim_custom_palettes.entry(file).or_insert_with_key(|file| {
+            let palette = asset_manager
+                .get_ref(file)
+                .and_then(|bytes| Palette::from_bytes(bytes).ok());
+            if palette.is_none() {
+                log::warn!("Ares animation CustomPalette {file} is missing; ANIM.PAL stays");
+            }
+            palette
+        });
+    }
     let palette_choices: Vec<SpritePaletteChoice> = new_keys
         .iter()
         .map(|key| {
+            #[cfg(feature = "ares")]
+            if anim_custom_file(key)
+                .is_some_and(|file| anim_custom_palettes.get(&file).is_some_and(Option::is_some))
+            {
+                return SpritePaletteChoice::AnimCustom;
+            }
             let extra_available = match key.palette_context {
                 ShpPaletteContext::ExtraScheme(palette) => interner
                     .and_then(|interner| extra_palettes.get(interner.resolve(palette)))
@@ -2619,6 +2666,11 @@ pub(crate) fn prepare_sprite_atlas(
                     .as_ref()
                     .expect("chosen only when loaded")
             }
+            #[cfg(feature = "ares")]
+            SpritePaletteChoice::AnimCustom => anim_custom_palettes
+                [&anim_custom_file(key).expect("chosen only with a file")]
+                .as_ref()
+                .expect("chosen only when loaded"),
         };
         // 0x00627590 builds each scheme with ColorScheme's constructor
         // (0x0068C710), which writes the colour's ramp over indices 16..31.

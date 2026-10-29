@@ -1371,6 +1371,35 @@ fn alt_palette_art_takes_the_unit_palette_even_when_it_is_a_world_effect() {
     );
 }
 
+/// Ares `CustomPalette=` (Mental Omega's APOCMUZZLE_* muzzle flashes) names
+/// the ordinary animation draw's palette file, `~~~` standing for the
+/// theater. `AltPalette=yes` still overrides it (4232D8 after the 4232CE
+/// hook), and a house-remapped cell-drawer draw keeps its scheme.
+#[cfg(feature = "ares")]
+#[test]
+fn ares_anim_custom_palette_names_the_theater_file_for_ordinary_draws() {
+    let art = ArtRegistry::from_ini(&crate::rules::ini_parser::IniFile::from_str(
+        "[FLASH]\nCustomPalette=Flash~~~.pal\n\
+         [ALT]\nAltPalette=yes\nCustomPalette=Flash~~~.pal\n[PLAIN]\nRate=1\n",
+    ));
+    let key = |type_id: &str, palette_context| ShpSpriteKey {
+        palette_context,
+        type_id: type_id.into(),
+        facing: 0,
+        frame: 0,
+        house_color: HouseColorIndex(0),
+    };
+    let file =
+        |type_id, context| anim_custom_palette_file(&key(type_id, context), Some(&art), "TEM");
+    assert_eq!(
+        file("FLASH", ShpPaletteContext::GlobalAnim).as_deref(),
+        Some("flashtem.pal")
+    );
+    assert_eq!(file("ALT", ShpPaletteContext::GlobalAnim), None);
+    assert_eq!(file("PLAIN", ShpPaletteContext::GlobalAnim), None);
+    assert_eq!(file("FLASH", ShpPaletteContext::Legacy), None);
+}
+
 #[test]
 fn gsi_13_08_effect_frame_count_halves_only_shadowed_non_scheduler_assets() {
     assert_eq!(available_effect_anim_frame_count(21, false, false), 21);

@@ -453,6 +453,12 @@ pub struct AnimTypeRuntimeConfig {
     /// counts. The doc previously said 41, which no scan of the retail file
     /// reproduces.)
     pub alt_palette: bool,
+    /// Ares `CustomPalette=` (a `.pal` file name; `~~~` stands for the
+    /// theater's extension): replaces the ordinary draw's ANIM.PAL unless
+    /// `AltPalette=yes` (AnimTypeExt+0xC, reader 1000A4F1 -> 10076160, which
+    /// replaces the first `~~~`; draw hook 4232CE).
+    #[cfg(feature = "ares")]
+    pub custom_palette: Option<String>,
     /// art.ini `UseNormalLight=`. The retail art.ini documents this as "does this
     /// anim always draw at 100% brightness? (def=no)", and gamemd's animation draw
     /// matches: it initialises the shape's brightness argument to full
@@ -803,6 +809,8 @@ fn parse_anim_runtime_config(section: &IniSection) -> AnimTypeRuntimeConfig {
         translucency_detail_level: section.read_int("TranslucencyDetailLevel", 0),
         translucent: section.read_bool("Translucent", false),
         alt_palette: section.read_bool("AltPalette", false),
+        #[cfg(feature = "ares")]
+        custom_palette: section.read_name("CustomPalette", 0x800).map(str::to_owned),
         // AnimTypeClass's constructor zeroes this field before the INI read and
         // the read passes the current field back as its own default, so an
         // omitted key leaves it false.
