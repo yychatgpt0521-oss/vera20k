@@ -962,15 +962,27 @@ impl Simulation {
                 }
                 //51E5C6 compares threshold < health ratio (C0), not the
                 //opposite. Equality returns Capture; masked NaN keeps C0=1.
+                // Native51E564..51E5D4 has no game-mode or MultiEngineer test.
+                // Ares's restored Multi Engineer (docs: restored/multiengineer)
+                // applies EngineerCaptureLevel only with that session option, the
+                // same gate the entry uses (519D82); a campaign always captures,
+                // as Mental Omega's campaign cursor shows. Ares 3.0 is closed.
+                #[cfg(feature = "ares")]
+                let multi_engineer =
+                    self.session.game_mode_nonzero() && self.session.game_options().multi_engineer;
+                #[cfg(not(feature = "ares"))]
+                let multi_engineer = true;
                 use crate::util::native_x87::{MaskedX87Chop53 as X87, MaskedX87Ordering};
                 return Some(
-                    if matches!(
-                        X87::compare(
-                            X87::load_f32(rules.general.engineer_capture_level),
-                            target.health.ratio(object.strength),
-                        ),
-                        MaskedX87Ordering::Less | MaskedX87Ordering::Unordered
-                    ) {
+                    if multi_engineer
+                        && matches!(
+                            X87::compare(
+                                X87::load_f32(rules.general.engineer_capture_level),
+                                target.health.ratio(object.strength),
+                            ),
+                            MaskedX87Ordering::Less | MaskedX87Ordering::Unordered
+                        )
+                    {
                         EngineerBuildingAction::Damage
                     } else {
                         EngineerBuildingAction::Capture

@@ -1572,6 +1572,12 @@ pub(crate) fn cursor_id_for_feedback(kind: CursorFeedbackKind) -> Option<CursorI
         CursorFeedbackKind::Minimap(id) => Some(id),
         CursorFeedbackKind::Enter | CursorFeedbackKind::Grind => Some(CursorId::Enter),
         CursorFeedbackKind::NoEnter => Some(CursorId::NoEnter),
+        // Ares names this action's cursor EngineerDamage and defaults it to
+        // Detonate (docs: new/mousecursors); Mental Omega keeps that default.
+        // [MouseCursors] overrides are not bound yet.
+        #[cfg(feature = "ares")]
+        CursorFeedbackKind::EngineerDamage => Some(CursorId::Detonate),
+        #[cfg(not(feature = "ares"))]
         CursorFeedbackKind::EngineerDamage => Some(CursorId::EngineerRepair),
         CursorFeedbackKind::RepairAction(valid) => Some(if valid {
             CursorId::Repair
@@ -2077,6 +2083,17 @@ pub(crate) fn toggle_cursor_confinement(state: &mut AppState) {
 mod tests {
     #[cfg(feature = "ares")]
     use super::super_weapon_cursor_id;
+
+    /// Ares's EngineerDamage cursor defaults to Detonate, not the native
+    /// engineer wrench (Mental Omega's damaged-building engineer cursor).
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_engineer_damage_uses_the_detonate_cursor() {
+        assert_eq!(
+            super::cursor_id_for_feedback(CursorFeedbackKind::EngineerDamage),
+            Some(CursorId::Detonate)
+        );
+    }
     use super::{
         ActionDistanceTarget, capability_cursor_for_hover, empty_cell_cursor, force_fire_feedback,
         select_best_for_action, what_action_on_cell,

@@ -742,6 +742,22 @@ fn original_half_threshold_and_friendly_repair_object_actions() {
         Some(&fixture.registry),
         crate::sim::world::FrameEffects::default(),
     );
+    // Ares applies this native compare only with the MultiEngineer session
+    // option, never in a campaign (engineer_capture_cursor_tests). Put the
+    // fixture there so the original threshold rows stay checked.
+    #[cfg(feature = "ares")]
+    {
+        let owner = fixture.sim.substrate.entities.get(id).unwrap().owner();
+        fixture.sim.session.set_game_mode(
+            crate::sim::scenario_session::ScenarioGameMode::from_legacy_nonzero(true),
+        );
+        fixture
+            .sim
+            .session
+            .game_options_mut_for_test()
+            .multi_engineer = true;
+        fixture.sim.session.set_current_house_for_test(Some(owner));
+    }
     for row in controls["enemy_rows"].as_array().unwrap() {
         fixture
             .sim

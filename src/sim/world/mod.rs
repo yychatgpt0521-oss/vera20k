@@ -189,6 +189,8 @@ mod damage_consequence_tests;
 mod drone_rocking_tests;
 #[cfg(test)]
 mod engineer_building_repair_tests;
+#[cfg(all(test, feature = "ares"))]
+mod engineer_capture_cursor_tests;
 #[cfg(test)]
 mod engineer_power_consumer_tests;
 #[cfg(test)]
