@@ -120,6 +120,9 @@ pub struct AttackerFacts {
     /// `AircraftClass+0x6CA` spawn retreat/collision flag
     /// (`SpawnRetreat__Push 0x0054E47D`).
     pub aircraft_spawn_collision: bool,
+    /// `TechnoClass+0x2FC` Ammo, read by Ares's NoAmmoWeapon arm.
+    #[cfg(feature = "ares")]
+    pub ammo: i32,
 }
 
 /// Flight virtuals are queried only where the selection ladder asks them.
@@ -742,6 +745,13 @@ fn techno_what_weapon_should_i_use(
     if let Some(slot) = attacker.open_transport_weapon {
         return slot;
     }
+    // Ares TechnoClass_SelectWeapon_NoAmmoWeapon (hook 0x6F3410 ->
+    // 0x10047AE0): a type with `Ammo=` (+0x684 >= 0) and a `NoAmmoWeapon=`
+    // slot fires that slot while its ammo is at or below `NoAmmoAmount=`.
+    #[cfg(feature = "ares")]
+    if obj.ammo >= 0 && obj.ares_no_ammo_weapon >= 0 && attacker.ammo <= obj.ares_no_ammo_amount {
+        return obj.ares_no_ammo_weapon;
+    }
     let techno = target.techno();
     let secondary_aa = projectile_aa(rules, secondary);
     let secondary_warhead = warhead_of(rules, secondary);
@@ -984,6 +994,10 @@ pub fn attacker_facts(entity: &GameEntity, obj: &ObjectType) -> AttackerFacts {
         mission_is_unload: entity.mission.effective().known() == Some(MissionType::Unload),
         is_overpowered_building: entity.tesla_charge.is_overpowered(),
         aircraft_spawn_collision: false,
+        #[cfg(feature = "ares")]
+        ammo: entity
+            .ammo()
+            .map_or(obj.ammo, crate::sim::ammo::TechnoAmmo::current),
     }
 }
 
@@ -1386,6 +1400,8 @@ mod tests {
             mission_is_unload: false,
             is_overpowered_building: false,
             aircraft_spawn_collision: false,
+            #[cfg(feature = "ares")]
+            ammo: 0,
         }
     }
 
@@ -1422,6 +1438,61 @@ mod tests {
             },
             cell => cell,
         }
+    }
+
+    /// Ares `NoAmmoWeapon=` (hook 0x6F3410): Mental Omega's Krukov fires his
+    /// sword (slot 1) once his rad beam's rounds are spent, and his beam
+    /// again while any remain above `NoAmmoAmount=`.
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_no_ammo_weapon_takes_over_when_the_ammo_runs_out() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[InfantryTypes]
+0=KRUKOV
+1=PLAIN
+[Warheads]
+0=BEAMWH
+1=SWORDWH
+             [KRUKOV]
+Ammo=2
+Primary=BEAM
+Secondary=SWORD
+NoAmmoWeapon=1
+             [PLAIN]
+Ammo=2
+Primary=BEAM
+Secondary=SWORD
+             [BEAM]
+Damage=150
+Warhead=BEAMWH
+Ammo=1
+             [SWORD]
+Damage=1
+Warhead=SWORDWH
+Ammo=0
+             [BEAMWH]
+Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
+             [SWORDWH]
+Verses=3%,3%,3%,3%,3%,3%,3%,3%,3%,3%,3%
+",
+        ))
+        .expect("Krukov rules");
+        let target = rules.object("PLAIN").unwrap();
+        let pick = |type_id, ammo| {
+            let attacker = AttackerFacts {
+                ammo,
+                ..facts(TechnoKind::Infantry)
+            };
+            what_weapon_should_i_use(
+                &rules,
+                rules.object(type_id).unwrap(),
+                &attacker,
+                Some(&techno(target, TechnoKind::Infantry)),
+            )
+        };
+        assert_eq!(pick("KRUKOV", 2), 0);
+        assert_eq!(pick("KRUKOV", 0), 1);
+        assert_eq!(pick("PLAIN", 0), 0);
     }
 
     // ---- GetWeapon ---------------------------------------------------------

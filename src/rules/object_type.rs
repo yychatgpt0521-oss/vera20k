@@ -1048,6 +1048,14 @@ pub struct ObjectType {
     /// Ares `Cursor.*` (and a BuildingType's `Cursor.Spy`) cursor names.
     #[cfg(feature = "ares")]
     ares_cursors: crate::rules::ares_mouse_cursors::TechnoCursors,
+    /// Ares `NoAmmoWeapon=` (TechnoTypeExt+0x468, default -1) and
+    /// `NoAmmoAmount=` (+0x464, default 0), read at 0x1003EEE0/0x1003EEF6:
+    /// the weapon slot a type with `Ammo=` fires while its ammo is at or
+    /// below the amount (docs: new/noammoweapon).
+    #[cfg(feature = "ares")]
+    pub(crate) ares_no_ammo_weapon: i32,
+    #[cfg(feature = "ares")]
+    pub(crate) ares_no_ammo_amount: i32,
     /// Ares 3.0 `Convert.Deploy`: the TechnoType an `IsSimpleDeployer=` unit
     /// becomes once its deploy completes, bound by the retained rules reader.
     #[cfg(feature = "ares")]
@@ -4082,6 +4090,10 @@ impl ObjectType {
             insignia_show_enemy: section.read_ares_nullable_bool("Insignia.ShowEnemy", None),
             #[cfg(feature = "ares")]
             ares_cursors: crate::rules::ares_mouse_cursors::TechnoCursors::read(section),
+            #[cfg(feature = "ares")]
+            ares_no_ammo_weapon: section.read_ares_int("NoAmmoWeapon", -1),
+            #[cfg(feature = "ares")]
+            ares_no_ammo_amount: section.read_ares_int("NoAmmoAmount", 0),
             #[cfg(feature = "ares")]
             convert_deploy: None,
             #[cfg(feature = "ares")]
