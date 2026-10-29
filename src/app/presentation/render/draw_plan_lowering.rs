@@ -143,6 +143,8 @@ pub(crate) enum ObjectExtrasRun {
         #[cfg(test)]
         parent: DrawId,
         bomb_clock: Option<u32>,
+        /// The clock's Ares `IvanBomb.Image`; `None` binds BOMBCURS.
+        bomb_image: Option<String>,
         wrench: Option<u32>,
         rank: Option<u32>,
         /// The rank's Ares insignia shape; `None` binds the stock PIPS strip.
@@ -427,6 +429,7 @@ pub(crate) fn lower_object_instances(entries: Vec<PlannedObjectInstance>) -> [Ob
                     #[cfg(test)]
                     parent: owner,
                     bomb_clock,
+                    bomb_image: strip.bomb_image,
                     wrench,
                     rank,
                     rank_insignia: strip.rank_insignia,
@@ -449,6 +452,7 @@ pub(crate) fn lower_object_instances(entries: Vec<PlannedObjectInstance>) -> [Ob
             if lines.as_ref().is_some_and(|lines| !lines.extras.is_empty()) {
                 if let Some(ObjectExtrasRun::Status {
                     bomb_clock,
+                    bomb_image,
                     wrench,
                     rank,
                     rank_insignia,
@@ -462,6 +466,7 @@ pub(crate) fn lower_object_instances(entries: Vec<PlannedObjectInstance>) -> [Ob
                         #[cfg(test)]
                         parent: owner,
                         bomb_clock: *bomb_clock,
+                        bomb_image: bomb_image.clone(),
                         wrench: *wrench,
                         rank: *rank,
                         rank_insignia: rank_insignia.clone(),
@@ -520,6 +525,7 @@ pub(crate) fn lower_object_instances(entries: Vec<PlannedObjectInstance>) -> [Ob
             }
             if let Some(ObjectExtrasRun::Status {
                 bomb_clock,
+                bomb_image,
                 wrench,
                 rank,
                 rank_insignia,
@@ -563,6 +569,7 @@ pub(crate) fn lower_object_instances(entries: Vec<PlannedObjectInstance>) -> [Ob
                         #[cfg(test)]
                         parent: owner,
                         bomb_clock,
+                        bomb_image,
                         wrench,
                         rank,
                         rank_insignia,

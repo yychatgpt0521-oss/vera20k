@@ -246,6 +246,8 @@ pub mod superweapon_type;
 pub mod hunter_seeker;
 pub mod em_pulse;
 #[cfg(feature = "ares")]
+pub mod ares_ivan_bomb;
+#[cfg(feature = "ares")]
 pub mod ares_super_paradrop;
 pub mod team_ai_ini;
 pub mod terrain_asset_catalog;

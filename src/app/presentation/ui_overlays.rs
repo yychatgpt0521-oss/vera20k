@@ -872,6 +872,9 @@ pub(crate) struct TechnoExtras {
     ///6F5253..5345: WRENCH/MOUSEPAL N1 prefix, before rank and Building lines.
     pub wrench: Option<SpriteInstance>,
     pub rank: Option<SpriteInstance>,
+    /// The Ares `IvanBomb.Image=` SHP (lower-case base name) `bomb_clock`
+    /// was cut from; `None` is the stock BOMBCURS strip.
+    pub bomb_image: Option<String>,
     /// The Ares insignia SHP (lower-case base name) `rank` was cut from;
     /// `None` is the stock PIPS strip. The drawer binds that shape's texture.
     pub rank_insignia: Option<String>,
@@ -1187,17 +1190,36 @@ pub(crate) fn techno_extras_for_parent(
             )
             .then_some(instance)
         };
+        // The bomb's own delay, blink rate and overlay image: the stock
+        // [CombatDamage] values, or its weapon's Ares `IvanBomb.*`.
         if bomb_visible
-            && let (Some(bomb), Some(rules), Some(shape)) =
-                (entity.bomb, rules, overlay.bomb_clock())
-            && let Some(frame) = bomb.clock_frame(
-                sim.session().binary_frame() as i32,
-                rules.combat_damage.ivan_timed_delay,
-                rules.combat_damage.ivan_icon_flicker_rate,
-            )
-            && let Ok(frame) = usize::try_from(frame)
+            && let (Some(bomb), Some(rules)) = (entity.bomb, rules)
+            && let Some(settings) = sim.bomb_settings_of(entity.stable_id(), rules)
         {
-            strip.bomb_clock = prefix(shape, frame);
+            #[cfg(feature = "ares")]
+            let image = settings
+                .image
+                .and_then(|name| Some((overlay.bomb_image(name)?, name.to_ascii_lowercase())));
+            #[cfg(not(feature = "ares"))]
+            let image: Option<(
+                &crate::render::selection_overlay::CenteredShapeStrip,
+                String,
+            )> = None;
+            let (shape, name) = match image {
+                Some((shape, name)) => (Some(shape), Some(name)),
+                None => (overlay.bomb_clock(), None),
+            };
+            if let Some(shape) = shape
+                && let Some(frame) = bomb.clock_frame(
+                    sim.session().binary_frame() as i32,
+                    settings.delay,
+                    settings.flicker_rate,
+                )
+                && let Ok(frame) = usize::try_from(frame)
+            {
+                strip.bomb_clock = prefix(shape, frame);
+                strip.bomb_image = strip.bomb_clock.is_some().then_some(name).flatten();
+            }
         }
         if repairing
             && let Some(shape) = overlay.repair_wrench()

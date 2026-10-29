@@ -282,6 +282,7 @@ fn native_bomb(fields: &serde_json::Value) -> Bomb {
         planter_house: InternedId::default(),
         start_frame: int("start"),
         end_frame: int("end"),
+        weapon: None,
         seen_by: 0,
     }
 }
@@ -1322,4 +1323,33 @@ fn bomb_rules_keys() {
         (100, 450, 8),
         "RulesClass constructor 0x00666B88..0x00666BA8"
     );
+}
+
+/// Mental Omega's TanyaC4 (REZNOV): an Ares weapon's own `IvanBomb.Delay`,
+/// `IvanBomb.Damage` and `IvanBomb.Detachable=no` replace the stock
+/// `[CombatDamage]` bomb, and an Engineer cannot disarm it.
+#[cfg(feature = "ares")]
+#[test]
+fn an_ares_weapon_bomb_uses_its_own_delay_damage_and_detachability() {
+    let rules = rules_from(&RULES.replace(
+        "Warhead=IvanBomb\n",
+        "Warhead=IvanBomb\nIvanBomb.Delay=75\nIvanBomb.Damage=600\nIvanBomb.Detachable=no\n",
+    ));
+    let (mut sim, grid) = arena(21, &rules);
+    let tank = spawn(&mut sim, &rules, "HTNK", "Americans", 12, 10);
+    let ivan = spawn(&mut sim, &rules, "IVAN", "Russians", 11, 10);
+    attack(&mut sim, ivan, tank);
+    run_until(&mut sim, &rules, &grid, 200, |sim| {
+        bomb(sim, tank).is_some()
+    })
+    .expect("planted");
+    let planted = bomb(&sim, tank).unwrap();
+    assert_eq!(planted.end_frame, planted.start_frame + 75);
+    assert!(!sim.bomb_disarmable(tank, &rules), "IvanBomb.Detachable=no");
+    let went_off = run_until(&mut sim, &rules, &grid, 200, |sim| {
+        entity(sim, tank).health.current() < 1000
+    })
+    .expect("the bomb goes off");
+    assert_eq!(went_off, planted.start_frame + 76);
+    assert_eq!(entity(&sim, tank).health.current(), 1000 - 600);
 }

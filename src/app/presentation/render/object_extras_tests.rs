@@ -4,6 +4,7 @@ fn rank_only(parent: u64, index: u32, insignia: Option<&str>) -> ObjectExtrasRun
     ObjectExtrasRun::Status {
         parent,
         bomb_clock: None,
+        bomb_image: None,
         wrench: None,
         rank: Some(index),
         rank_insignia: insignia.map(str::to_owned),

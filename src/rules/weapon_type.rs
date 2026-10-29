@@ -72,6 +72,9 @@ pub struct WeaponType {
     /// Valueable<int> retains failed/missing reads; default one round.
     #[cfg(feature = "ares")]
     ares_ammo_cost: i32,
+    /// Ares per-weapon `IvanBomb.*` (only meaningful with an IvanBomb warhead).
+    #[cfg(feature = "ares")]
+    ivan_bomb: crate::rules::ares_ivan_bomb::IvanBombRules,
     /// `RevealOnFire=` (`+0x137`, default yes): a launched shot reveals the
     /// firer to a human victim (FireAt `0x006FF66C`). Retail turns it off on
     /// the sniper, Virus, disguise and Mirage weapons.
@@ -218,6 +221,11 @@ pub struct WeaponType {
 }
 
 impl WeaponType {
+    #[cfg(feature = "ares")]
+    pub fn ivan_bomb(&self) -> &crate::rules::ares_ivan_bomb::IvanBombRules {
+        &self.ivan_bomb
+    }
+
     pub(crate) fn ammo_cost(&self) -> i32 {
         #[cfg(feature = "ares")]
         return self.ares_ammo_cost;
@@ -265,6 +273,8 @@ impl WeaponType {
             burst: section.read_int("Burst", 1),
             #[cfg(feature = "ares")]
             ares_ammo_cost: section.read_ares_int("Ammo", 1),
+            #[cfg(feature = "ares")]
+            ivan_bomb: crate::rules::ares_ivan_bomb::IvanBombRules::from_section(section),
             // Constructor 1 (`0x00771DBB`); ReadINI passes it as the default
             // (`0x00772182..0x00772196`).
             reveal_on_fire: section.read_bool("RevealOnFire", true),

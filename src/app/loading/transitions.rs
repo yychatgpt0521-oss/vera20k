@@ -367,6 +367,15 @@ pub(crate) fn install_world_presentation(
                 .all_objects()
                 .flat_map(|object| object.insignia_names()),
         );
+        overlay.load_bomb_images(
+            &state.renderer.gpu.device,
+            &state.renderer.gpu.queue,
+            &state.renderer.batch_renderer,
+            assets,
+            rules
+                .weapons_iter()
+                .filter_map(|weapon| weapon.ivan_bomb().image.as_deref()),
+        );
     }
     // Phobos placement preview strips embed the active theater's palette and
     // the local house colour; a map load invalidates them.

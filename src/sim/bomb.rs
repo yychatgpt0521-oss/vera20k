@@ -130,8 +130,12 @@ pub struct Bomb {
     planter_house: InternedId,
     /// `+0x34`: the attach frame.
     start_frame: i32,
-    /// `+0x38`: `start_frame + IvanTimedDelay`.
+    /// `+0x38`: `start_frame` plus the bomb's delay ([`bomb_settings`]).
     end_frame: i32,
+    /// The weapon that planted it (Ares BombExt): its `IvanBomb.*` keys
+    /// replace the stock bomb settings ([`bomb_settings`]).
+    #[serde(default)]
+    weapon: Option<InternedId>,
     /// The houses whose player sees it, bit `n` for
     /// `Houses::order()[n]`: native's per-client BombVisible
     /// (the carrier's `+0x68`) for every house at once. Written only by
@@ -147,6 +151,7 @@ impl Hash for Bomb {
         self.planter_house.hash(state);
         self.start_frame.hash(state);
         self.end_frame.hash(state);
+        self.weapon.hash(state);
     }
 }
 
@@ -216,6 +221,11 @@ impl Bomb {
         self.planter
     }
 
+    /// The weapon that planted it, if known.
+    pub fn weapon(&self) -> Option<InternedId> {
+        self.weapon
+    }
+
     /// `BombClass::IsTimerExpired @ 0x00438A70` for a timed bomb.
     pub(crate) fn expired(&self, frame: i32) -> bool {
         frame > self.end_frame
@@ -241,7 +251,11 @@ pub(crate) struct BombBlast {
     /// The carrier's Location, which the blast, its anim and the hut's
     /// bridge all use (`0x00438775..0x0043879F`).
     location: ProjectileCoord,
+    /// A Bridge Repair Hut carrier whose bomb destroys bridges.
     bridge_hut: bool,
+    /// The bomb's damage and warhead ([`bomb_settings`]).
+    damage: i32,
+    warhead: Option<String>,
 }
 
 impl Simulation {
@@ -271,6 +285,26 @@ impl Simulation {
     }
 
     /// The live bombs' carriers (`BombListClass`'s list).
+    /// The settings of `carrier`'s bomb, if it carries one.
+    pub fn bomb_settings_of<'r>(
+        &self,
+        carrier: u64,
+        rules: &'r RuleSet,
+    ) -> Option<BombSettings<'r>> {
+        let bomb = self.substrate.entities.get(carrier)?.bomb?;
+        Some(bomb_settings(
+            rules,
+            bomb.weapon.map(|weapon| self.interner.resolve(weapon)),
+        ))
+    }
+
+    /// Whether an Engineer's BombDisarm may remove `carrier`'s bomb: it
+    /// carries one, and under Ares its weapon is `IvanBomb.Detachable=yes`.
+    pub fn bomb_disarmable(&self, carrier: u64, rules: &RuleSet) -> bool {
+        self.bomb_settings_of(carrier, rules)
+            .is_some_and(|settings| settings.detachable)
+    }
+
     pub fn bomb_carriers(&self) -> &BTreeSet<u64> {
         &self.bombs.carriers
     }
@@ -399,6 +433,7 @@ impl Simulation {
         bombs: &mut BombList,
         planter: u64,
         target: Option<u64>,
+        weapon: Option<InternedId>,
         rules: &RuleSet,
     ) {
         // An object UnInit has passed reads as the null pointer its expiry
@@ -431,11 +466,13 @@ impl Simulation {
             resolved_terrain.as_ref(),
         );
         let start_frame = session.binary_frame() as i32;
+        let settings = bomb_settings(rules, weapon.map(|weapon| interner.resolve(weapon)));
         let bomb = Bomb {
             planter: Some(planter),
             planter_house,
             start_frame,
-            end_frame: start_frame.wrapping_add(rules.combat_damage.ivan_timed_delay),
+            end_frame: start_frame.wrapping_add(settings.delay),
+            weapon,
             seen_by: 0,
         };
         if let Some(carrier) = substrate.entities.get_mut(target) {
@@ -451,7 +488,7 @@ impl Simulation {
         );
         // 0x00438FD7..0x0043901D: BombAttachSound at the target, only for the
         // player who owns the planter (+0x21C).
-        if let Some(sound_id) = rules.general.bomb_attach_sound.clone() {
+        if let Some(sound_id) = settings.attach_sound.map(str::to_owned) {
             sound_events.emit(SimSoundEvent::VocAt {
                 sound_id,
                 audible_to: Some([planter_house, planter_house]),
@@ -517,7 +554,9 @@ impl Simulation {
             session.binary_frame(),
             bomb.planter,
         );
-        let bridge_hut = entity.category() == EntityCategory::Structure
+        let settings = bomb_settings(rules, bomb.weapon.map(|weapon| interner.resolve(weapon)));
+        let bridge_hut = settings.destroys_bridges
+            && entity.category() == EntityCategory::Structure
             && interner
                 .object_type(entity.type_ref(), rules)
                 .is_some_and(|object| object.bridge_repair_hut);
@@ -526,6 +565,8 @@ impl Simulation {
             source: bomb.planter.unwrap_or(crate::sim::combat::RAD_NO_ATTACKER),
             location: ProjectileCoord::new(location.x, location.y, location.z),
             bridge_hut,
+            damage: settings.damage,
+            warhead: settings.warhead.map(|warhead| warhead.id.clone()),
         })
     }
 
@@ -559,7 +600,11 @@ impl Simulation {
         ) else {
             return false;
         };
-        let Some(warhead) = ivan_warhead(rules) else {
+        let Some(warhead) = blast
+            .warhead
+            .as_deref()
+            .and_then(|name| rules.warhead(name))
+        else {
             return false;
         };
         let origin = blast.origin(&mut self.interner, warhead);
@@ -568,7 +613,7 @@ impl Simulation {
             rules,
             overlay_registry,
             blast.location,
-            rules.combat_damage.ivan_damage,
+            blast.damage,
             warhead,
             origin,
             frame_effects,
@@ -596,7 +641,10 @@ impl Simulation {
             carrier,
             rules,
         )?;
-        let warhead = ivan_warhead(rules)?;
+        let warhead = blast
+            .warhead
+            .as_deref()
+            .and_then(|name| rules.warhead(name))?;
         let origin = blast.origin(&mut self.interner, warhead);
         let (mut effects, pings) = apply_area_damage_in_run(
             self,
@@ -604,7 +652,7 @@ impl Simulation {
             rules,
             overlay_registry,
             blast.location,
-            rules.combat_damage.ivan_damage,
+            blast.damage,
             warhead,
             origin,
         );
@@ -631,7 +679,7 @@ impl Simulation {
             self,
             rules,
             warhead,
-            rules.combat_damage.ivan_damage,
+            blast.damage,
             land,
             blast.location,
             blast.location,
@@ -651,14 +699,71 @@ impl Simulation {
     }
 }
 
-/// `[CombatDamage] IvanWarhead=` (`Rules+0xFC8`); without one a bomb's record
-/// still goes but nothing blasts.
-fn ivan_warhead(rules: &RuleSet) -> Option<&WarheadType> {
-    rules
-        .combat_damage
-        .ivan_warhead
-        .as_deref()
-        .and_then(|name| rules.warhead(name))
+/// One bomb's settings: the stock `[CombatDamage]`/`[AudioVisual]` keys,
+/// replaced under Ares by its planting weapon's `IvanBomb.*` (docs:
+/// new/weapons/ivanbombs; Ares 3.0 is closed source).
+pub struct BombSettings<'r> {
+    /// Frames until a time bomb goes off (`IvanTimedDelay=`).
+    pub delay: i32,
+    /// The blast's damage (`IvanDamage=`).
+    pub damage: i32,
+    /// The blast's warhead (`IvanWarhead=`); without one nothing blasts.
+    pub warhead: Option<&'r WarheadType>,
+    /// Whether an Engineer may remove it (stock: always).
+    pub detachable: bool,
+    /// Whether a bombed Bridge Repair Hut collapses its bridge (stock: yes).
+    pub destroys_bridges: bool,
+    /// The overlay SHP base name instead of BOMBCURS (Ares only).
+    pub image: Option<&'r str>,
+    /// The clock's blink rate (`IvanIconFlickerRate=`).
+    pub flicker_rate: i32,
+    /// `BombAttachSound=`.
+    pub attach_sound: Option<&'r str>,
+    /// `BombTickingSound=`.
+    pub ticking_sound: Option<&'r str>,
+}
+
+/// [`BombSettings`] for a bomb planted by `weapon` (`None`: the stock bomb).
+pub fn bomb_settings<'r>(rules: &'r RuleSet, weapon: Option<&str>) -> BombSettings<'r> {
+    #[cfg(feature = "ares")]
+    let ares = weapon
+        .and_then(|name| rules.weapon(name))
+        .map(crate::rules::weapon_type::WeaponType::ivan_bomb);
+    #[cfg(not(feature = "ares"))]
+    let _ = weapon;
+    let stock = BombSettings {
+        delay: rules.combat_damage.ivan_timed_delay,
+        damage: rules.combat_damage.ivan_damage,
+        warhead: rules
+            .combat_damage
+            .ivan_warhead
+            .as_deref()
+            .and_then(|name| rules.warhead(name)),
+        detachable: true,
+        destroys_bridges: true,
+        image: None,
+        flicker_rate: rules.combat_damage.ivan_icon_flicker_rate,
+        attach_sound: rules.general.bomb_attach_sound.as_deref(),
+        ticking_sound: rules.general.bomb_ticking_sound.as_deref(),
+    };
+    #[cfg(feature = "ares")]
+    if let Some(ares) = ares {
+        return BombSettings {
+            delay: ares.delay.unwrap_or(stock.delay),
+            damage: ares.damage.unwrap_or(stock.damage),
+            warhead: match ares.warhead.as_deref() {
+                Some(name) => rules.warhead(name),
+                None => stock.warhead,
+            },
+            detachable: ares.detachable,
+            destroys_bridges: ares.destroys_bridges,
+            image: ares.image.as_deref(),
+            flicker_rate: ares.flicker_rate.unwrap_or(stock.flicker_rate),
+            attach_sound: ares.attach_sound.as_deref().or(stock.attach_sound),
+            ticking_sound: ares.ticking_sound.as_deref().or(stock.ticking_sound),
+        };
+    }
+    stock
 }
 
 impl BombBlast {

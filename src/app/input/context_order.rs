@@ -3825,10 +3825,8 @@ fn disarm_bomb_engineers(
     target: u64,
     player: InternedId,
 ) -> Vec<u64> {
-    let bombed = sim
-        .entities()
-        .get(target)
-        .is_some_and(|entity| entity.bomb.is_some());
+    // Ares `IvanBomb.Detachable=no` bombs cannot be disarmed.
+    let bombed = sim.bomb_disarmable(target, rules);
     if !bombed || !sim.bomb_seen_by(target, player) {
         return Vec::new();
     }

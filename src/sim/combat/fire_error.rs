@@ -444,6 +444,9 @@ pub(crate) struct TargetFacts {
     pub kind: FireTargetKind,
     /// `+0x38` an attached bomb (any ObjectClass).
     pub bomb: bool,
+    /// That bomb may be disarmed: always natively, not for an Ares
+    /// `IvanBomb.Detachable=no` bomb.
+    pub bomb_disarmable: bool,
     pub in_limbo: bool,          // +0x81
     pub on_bridge: bool,         // +0x8C
     pub z: i32,                  // +0xA4
@@ -1096,7 +1099,7 @@ fn techno(facts: &FireFacts, query: &mut impl FireQuery, check_range: bool) -> F
         if (warhead.parasite && target.iron_curtained)
             || (warhead.mind_control && !query.can_capture())
             || warhead.armor_rejects_fire
-            || (warhead.bomb_disarm && !target.bomb)
+            || (warhead.bomb_disarm && !target.bomb_disarmable)
             || (warhead.ivan_bomb && target.bomb)
             || target.sinking
         {

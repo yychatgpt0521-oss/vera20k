@@ -802,7 +802,7 @@ pub(super) fn capability_cursor_for_hover(
         && rules
             .and_then(|rules| sim.interner().object_type(actor.type_ref(), rules))
             .is_some_and(|object| object.engineer)
-        && hovered_entity.is_some_and(|target| target.bomb.is_some())
+        && rules.is_some_and(|rules| sim.bomb_disarmable(hover.stable_id, rules))
         && sim.bomb_seen_by(hover.stable_id, actor.owner())
     {
         return CursorFeedbackKind::DisarmBomb;

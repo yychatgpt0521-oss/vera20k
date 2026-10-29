@@ -314,6 +314,7 @@ fn draw_status_prefix<'a>(
 ) {
     let ObjectExtrasRun::Status {
         bomb_clock,
+        bomb_image,
         wrench,
         rank,
         rank_insignia,
@@ -326,7 +327,15 @@ fn draw_status_prefix<'a>(
     else {
         unreachable!("line parents fence status attachment passes");
     };
-    if let (Some(index), Some(shape)) = (bomb_clock, overlay.bomb_clock()) {
+    // An Ares `IvanBomb.Image` clock was cut from its own SHP.
+    #[cfg(feature = "ares")]
+    let clock_shape = match bomb_image {
+        Some(name) => overlay.bomb_image(name),
+        None => overlay.bomb_clock(),
+    };
+    #[cfg(not(feature = "ares"))]
+    let clock_shape = bomb_image.as_ref().map_or(overlay.bomb_clock(), |_| None);
+    if let (Some(index), Some(shape)) = (bomb_clock, clock_shape) {
         //6F524E: MOUSEPAL N1, E00/493DF0 consumes A and bypasses Z.
         batch.draw_passthrough_range(pass, shape.texture(), buffer, *index, 1);
     }

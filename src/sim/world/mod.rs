@@ -3755,6 +3755,7 @@ impl Simulation {
             &mut self.bombs,
             planter,
             target,
+            None,
             rules,
         );
     }

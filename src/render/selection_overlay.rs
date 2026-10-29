@@ -62,6 +62,10 @@ pub struct SelectionOverlay {
     /// missing file, which leaves the stock PIPS rank.
     #[cfg(feature = "ares")]
     insignia: std::collections::HashMap<String, Option<CenteredShapeStrip>>,
+    /// Ares weapon `IvanBomb.Image=` SHPs by lowercase base name, in
+    /// BOMBCURS's MOUSEPAL palette. `None` for a missing file (BOMBCURS stays).
+    #[cfg(feature = "ares")]
+    bomb_images: std::collections::HashMap<String, Option<CenteredShapeStrip>>,
 }
 
 /// Every frame of one SHP packed side by side at its stored size, each with
@@ -451,6 +455,8 @@ impl SelectionOverlay {
             digital_shapes: Vec::new(),
             #[cfg(feature = "ares")]
             insignia: std::collections::HashMap::new(),
+            #[cfg(feature = "ares")]
+            bomb_images: std::collections::HashMap::new(),
         }
     }
 
@@ -483,6 +489,42 @@ impl SelectionOverlay {
             }
             self.insignia.insert(key, strip);
         }
+    }
+
+    /// Load every named Ares Ivan Bomb overlay SHP once per match.
+    #[cfg(feature = "ares")]
+    pub(crate) fn load_bomb_images<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        batch: &BatchRenderer,
+        assets: &AssetManager,
+        names: impl Iterator<Item = &'a str>,
+    ) {
+        for name in names {
+            let key = name.to_ascii_lowercase();
+            if self.bomb_images.contains_key(&key) {
+                continue;
+            }
+            let strip = CenteredShapeStrip::from_assets_on_device(
+                device,
+                queue,
+                batch,
+                assets,
+                &format!("{name}.shp"),
+                "mousepal.pal",
+            );
+            if strip.is_none() {
+                log::warn!("Ares IvanBomb.Image {name}.shp is missing; BOMBCURS stays");
+            }
+            self.bomb_images.insert(key, strip);
+        }
+    }
+
+    /// A loaded Ares Ivan Bomb overlay SHP by base name.
+    #[cfg(feature = "ares")]
+    pub(crate) fn bomb_image(&self, name: &str) -> Option<&CenteredShapeStrip> {
+        self.bomb_images.get(&name.to_ascii_lowercase())?.as_ref()
     }
 
     /// A loaded Ares insignia SHP by base name.

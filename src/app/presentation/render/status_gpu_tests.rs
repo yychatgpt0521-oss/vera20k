@@ -2407,6 +2407,7 @@ fn native_status_controls(fixture: &'static str, type_name: &str, category: Enti
                         fenced.extras_runs.push(ObjectExtrasRun::Status {
                             parent,
                             bomb_clock: None,
+                            bomb_image: None,
                             wrench: None,
                             rank: *rank,
                             rank_insignia: None,

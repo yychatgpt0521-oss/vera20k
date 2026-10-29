@@ -503,9 +503,19 @@ fn drain_sound_events_inner(state: &mut AppState, redrive_owners: bool) {
         .sim_runtime
         .as_ref()
         .map(|rt| &rt.simulation);
-    let ticking_sound = state
-        .rules()
-        .and_then(|rules| rules.general.bomb_ticking_sound.clone());
+    // Each carrier's own ticking sound: BombTickingSound, or its planting
+    // weapon's Ares `IvanBomb.TickingSound=`.
+    let ticking_sounds: Vec<(u64, String)> = match (sim, state.rules()) {
+        (Some(sim), Some(rules)) => sim
+            .bomb_carriers()
+            .iter()
+            .filter_map(|&carrier| {
+                let sound = sim.bomb_settings_of(carrier, rules)?.ticking_sound?;
+                Some((carrier, sound.to_owned()))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let (Some(sfx), Some(assets), Some(catalog)) = (
         &mut state.audio.sfx_player,
         state.process_assets.manager(),
@@ -539,9 +549,12 @@ fn drain_sound_events_inner(state: &mut AppState, redrive_owners: bool) {
     // re-drives and stops it through `bomb_ticking_coord`.
     // `RulesClass::ReadAudioVisual` keeps only `VocClass::FindByName`'s index:
     // an unregistered name is -1, which the ticking pass skips (0x00438C7F).
-    let ticking_sound = ticking_sound.filter(|sound_id| registry.get(sound_id).is_some());
-    if let (Some(sim), Some(sound_id)) = (sim, ticking_sound.as_deref()) {
-        for &carrier in sim.bomb_carriers() {
+    if let Some(sim) = sim {
+        for (carrier, sound_id) in &ticking_sounds {
+            let (carrier, sound_id) = (*carrier, sound_id.as_str());
+            if registry.get(sound_id).is_none() {
+                continue;
+            }
             let owner = crate::sim::bomb::ticking_sound_owner(carrier);
             if sfx.loop_handle_sound_id(owner).is_some() {
                 continue;

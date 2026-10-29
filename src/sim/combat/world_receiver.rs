@@ -2691,6 +2691,7 @@ fn run_special_detonation_arm(
                 &mut world.bombs,
                 owner,
                 object,
+                detonation.payload.installed_weapon(),
                 rules,
             );
         }

@@ -307,6 +307,8 @@ fn facts(input: &Value) -> FireFacts {
         target: TargetFacts {
             kind: target_kind(t["kind"].as_str().unwrap()),
             bomb: flag(&t["bomb"]),
+            // Natively every bomb may be disarmed.
+            bomb_disarmable: flag(&t["bomb"]),
             in_limbo: flag(&t["in_limbo"]),
             on_bridge: flag(&t["on_bridge"]),
             z: int(&t["z"]),

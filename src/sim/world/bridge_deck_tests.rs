@@ -356,6 +356,7 @@ fn a_bombed_bridge_hut_drops_its_bridge() {
                 &mut sim.bombs,
                 ivan,
                 Some(hut),
+                None,
                 &rules,
             );
         }
