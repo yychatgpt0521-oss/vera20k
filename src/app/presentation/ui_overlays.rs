@@ -872,6 +872,9 @@ pub(crate) struct TechnoExtras {
     ///6F5253..5345: WRENCH/MOUSEPAL N1 prefix, before rank and Building lines.
     pub wrench: Option<SpriteInstance>,
     pub rank: Option<SpriteInstance>,
+    /// The Ares insignia SHP (lower-case base name) `rank` was cut from;
+    /// `None` is the stock PIPS strip. The drawer binds that shape's texture.
+    pub rank_insignia: Option<String>,
     pub background: Option<SpriteInstance>,
     /// Phobos mobile shield PIPBRD/E00, before the shield and health fills.
     pub shield_background: Option<SpriteInstance>,
@@ -1275,11 +1278,11 @@ pub(crate) fn techno_extras_for_parent(
                 .unwrap_or_else(|| rules.is_none_or(|rules| rules.general.enemy_insignia));
             let custom = object
                 .and_then(|object| object.insignia(crate::sim::combat::veterancy::rank_of(raw)))
-                .and_then(|name| overlay.insignia(name));
+                .and_then(|name| Some((overlay.insignia(name)?, name.to_ascii_lowercase())));
             if !can_see {
                 None
-            } else if let Some(custom) = custom {
-                Some((custom, 0))
+            } else if let Some((custom, name)) = custom {
+                Some((custom, 0, Some(name)))
             } else {
                 let frame = if raw_is_elite(raw) {
                     Some(15)
@@ -1290,7 +1293,7 @@ pub(crate) fn techno_extras_for_parent(
                 };
                 frame
                     .zip(overlay.pips())
-                    .map(|(frame, shape)| (shape, frame))
+                    .map(|(frame, shape)| (shape, frame, None))
             }
         };
         #[cfg(not(feature = "ares"))]
@@ -1306,9 +1309,9 @@ pub(crate) fn techno_extras_for_parent(
             };
             frame
                 .zip(overlay.pips())
-                .map(|(frame, shape)| (shape, frame))
+                .map(|(frame, shape)| (shape, frame, None))
         };
-        if let Some((shape, frame)) = rank_art {
+        if let Some((shape, frame, insignia)) = rank_art {
             let (dx, dy) = if entity.category() == EntityCategory::Infantry {
                 (5.0, 2.0)
             } else {
@@ -1322,6 +1325,7 @@ pub(crate) fn techno_extras_for_parent(
                     rank.z_adjust = -2.0;
                     rank
                 });
+            strip.rank_insignia = strip.rank.is_some().then_some(insignia).flatten();
         }
     }
     let (draw_background, draw_health) =
