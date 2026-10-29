@@ -177,17 +177,6 @@ impl GeneratedTechnoInitTable {
     }
 }
 
-fn object_uses_voxel(type_id: &str, object: &ObjectType, rules: &RuleSet) -> bool {
-    rules
-        .art()
-        .resolve_metadata_entry(type_id, &object.image)
-        .map(|entry| entry.voxel)
-        .unwrap_or(matches!(
-            object.category,
-            ObjectCategory::Vehicle | ObjectCategory::Aircraft
-        ))
-}
-
 impl Simulation {
     /// Build one deliberately lifecycle-free Techno for diagnostic tools.
     ///
@@ -463,7 +452,7 @@ impl Simulation {
                 };
                 let uses_voxel: bool = {
                         authored_health::map_object_type(map_ent.category, &map_ent.type_id, rules)
-                            .map(|object| object_uses_voxel(&map_ent.type_id, object, rules))
+                            .map(|object| GameEntity::object_uses_voxel(&map_ent.type_id, object, rules))
                     }
                     .unwrap_or(uses_voxel_default);
 
@@ -591,7 +580,10 @@ impl Simulation {
                 if matches!(outcome, RevealOutcome::Revealed { .. }) {
                     Self::initialize_cloak_after_unlimbo(&sim.interner, &sim.session, &mut sim.substrate, stable_id, rules);
                     sim.add_unit_sensor_after_unlimbo(stable_id, rules, overlay_registry);
-                    sim.add_building_sensor_array_if_powered(stable_id, rules, overlay_registry);
+                    // ReadScenarioBuildings (0x0044F820) makes no sensor call:
+                    // a map building stamps only if the first opening its
+                    // Unlimbo already ran (0x00440D61 / 0x00440E76) passed
+                    // Is_Operational.
                 }
                 Self::commit_map_placement_mission(&sim.session, &mut sim.substrate, stable_id, map_ent.mission);
                 // ReadINI44FC1B..44FD23: the factory callback is inside
@@ -2010,8 +2002,8 @@ impl Simulation {
     }
 
     /// Store a new object, then place it through active
-    /// `ObjectClass::Reveal @ 0x005F4EC0`: coordinates commit, the mode-one
-    /// playfield gate and Mark(PUT) own the result, and eligible logic
+    /// `ObjectClass::Reveal @ 0x005F4EC0`: coordinates commit, Mark(PUT)
+    /// owns the result, and eligible logic
     /// registration happens last. A failed attempt keeps the constructed
     /// identity in limbo for its caller to retain or discard.
     #[cfg(any(test, feature = "test-support"))]
@@ -2288,8 +2280,10 @@ impl Simulation {
             {
                 return PlacementEvidence::RejectedEarly;
             }
-            // Keep the Reveal playfield gate (see its residual) and Mark. The
-            // class decision does not make PlaceAnywhere bypass the gate.
+            // These admissions hold the building's only playfield refusal:
+            // CanPlaceAt asks Is_Clear_To_Build (`0x0047C620`) of each
+            // foundation cell unless the type is PlaceAnywhere. No later
+            // Unlimbo layer asks; Mark(PUT) owns the rest.
             return PlacementEvidence::EvaluateMark;
         }
         match self.foot_can_enter(
@@ -2337,13 +2331,14 @@ impl Simulation {
         stable_id: u64,
         rules: &RuleSet,
     ) {
-        let Some((category, veterancy, in_playfield, type_ref)) =
+        let Some((category, veterancy, in_playfield, type_ref, stealth_ability)) =
             substrate.entities.get(stable_id).map(|entity| {
                 (
                     entity.category(),
                     entity.veterancy.rank(),
                     entity.in_playfield(),
                     entity.type_ref(),
+                    entity.stealth_ability,
                 )
             })
         else {
@@ -2357,13 +2352,14 @@ impl Simulation {
             return;
         };
         let rank_cloak = has_weapon_ability(rank_from_u16(veterancy), object, Ability::Cloak);
-        if !object.cloakable && !rank_cloak {
+        let intrinsic_cloak = stealth_ability.active(object.cloakable);
+        if !intrinsic_cloak && !rank_cloak {
             return;
         }
         let frame = session.binary_frame() as i32;
         // Only UnitClass owns the direct Unlimbo state write, and it tests the
         // copied runtime Cloakable byte rather than rank-granted CLOAK.
-        let fully_cloaked = category == EntityCategory::Unit && object.cloakable && !in_playfield;
+        let fully_cloaked = category == EntityCategory::Unit && intrinsic_cloak && !in_playfield;
         if let Some(entity) = substrate.entities.get_mut(stable_id) {
             crate::sim::cloak_disguise::CloakRuntime::install(
                 &mut entity.cloak,
@@ -2800,7 +2796,15 @@ impl Simulation {
                 .anchor_first_node(pack_base_plan_cell(i32::from(rx), i32::from(ry)));
             house.anchor_base_plan((rx, ry));
             house.enable_ai_deploy_latches();
-            self.move_ground_forces_to_base(owner_id, rules, registry, frame_effects);
+            // Phobos `[General] GatherWhenMCVDeploy=` skips the native
+            // regroup (hook at `0x739920`) while keeping every earlier write.
+            #[cfg(feature = "phobos")]
+            let gather = rules.general.gather_when_mcv_deploy;
+            #[cfg(not(feature = "phobos"))]
+            let gather = true;
+            if gather {
+                self.move_ground_forces_to_base(owner_id, rules, registry, frame_effects);
+            }
         }
 
         // 0x00739956: a Slave Miner's manager moves to its refinery (the

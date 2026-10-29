@@ -7,7 +7,7 @@
 //! and answers through [`service_event`]; production answers synchronously
 //! from [`WolProvider::Unavailable`]. No request ever manufactures success.
 
-use std::time::{Duration, Instant};
+use crate::util::time::{Duration, Instant};
 
 use super::{WolBoxThen, WolPage, WolVisit};
 use crate::app::persistence::wol_profile::{WolInfoFile, WolPersona};
@@ -247,7 +247,7 @@ pub(crate) enum WolServiceEvent {
         kind: u32,
         channels: Vec<WolChannel>,
     },
-    /// The chat sink's OnJoin `0x007A5E40` for this user: the joined
+    /// The chat sink's OnJoin `0x007A5890` for this user: the joined
     /// channel with its users, or the result code.
     Joined(Result<super::lobby::WolJoined, u32>),
     /// OnJoin for another user of the current channel.

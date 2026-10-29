@@ -492,9 +492,14 @@ pub enum PlacementEvidence {
     /// An Unlimbo request for the class admission
     /// ([`Simulation::unlimbo_class_entry`]), which fixed/runtime constructors
     /// use so a later placement rejection can retain the spent constructor.
-    /// What reaches Reveal unconverted (a building, or a map-less fixture)
-    /// runs VERA's playfield gate before Mark(PUT); see
-    /// `reveal_position_is_in_playfield`.
+    /// What reaches Reveal unconverted (a building its admission accepted, or
+    /// a map-less fixture) goes straight to Mark(PUT): no Unlimbo layer
+    /// refuses on the playfield (Building `0x00440580..0x004415E6`, Techno
+    /// `0x006F6CA0`, Object `0x005F4EC0`). A building's playfield refusal is
+    /// its own Can_Enter_Cell (`0x00449440`), reached through Object
+    /// Unlimbo's +1AC call (`0x005F4F3C`), whose CanPlaceAt asks
+    /// Is_Clear_To_Build (`0x0047C620`; playfield test at `0x0047C878`) of
+    /// each foundation cell unless the type is `PlaceAnywhere=`.
     EvaluateMark,
     /// Object5F4F1B accepted a Foot's admission (Unit, Infantry or Aircraft):
     /// either its class +1AC receiver returned zero or the caller's A8E7AC
@@ -616,7 +621,7 @@ const NULL_TARGET_CELL_SENTINEL: (i16, i16) = (0, 0);
 /// would overflow and return `None`. No retail map approaches that bound.
 /// Native's own guard against a bad coordinate is the (0, 0) sentinel, checked
 /// at the callback instead, so this arm is not the sentinel's analogue.
-pub(super) fn object_get_coords_cell(
+pub(crate) fn object_get_coords_cell(
     entity: &crate::sim::game_entity::GameEntity,
 ) -> Option<(u16, u16)> {
     let [world_x, world_y] = crate::sim::movement::ground_pose::object_center_xy(entity);
@@ -820,6 +825,12 @@ pub enum LifecycleOutput {
         stable_id: u64,
     },
     ClearRedraw {
+        stable_id: u64,
+    },
+    /// Same-object Type changes (Ares ConvertTechno10043740) keep their
+    /// Display membership. Presentation must re-resolve that object's model
+    /// without pretending that another object spawned or entered Display.
+    ObjectTypeChanged {
         stable_id: u64,
     },
 }
@@ -1253,12 +1264,6 @@ impl Simulation {
             return RevealOutcome::AlreadyRevealed;
         }
         if entity.lifecycle.cell_marked || request.placement == PlacementEvidence::RejectedEarly {
-            return RevealOutcome::Failed(RevealFailure::RejectedEarly);
-        }
-        if request.placement == PlacementEvidence::EvaluateMark
-            && !self.object_placement_scope_active()
-            && !self.reveal_position_is_in_playfield(request.position, context)
-        {
             return RevealOutcome::Failed(RevealFailure::RejectedEarly);
         }
 
@@ -2308,23 +2313,9 @@ impl Simulation {
     }
 
     /// IsCellInPlayfield (`0x00578460`, mode 1) of the Reveal position's
-    /// origin Cell. Unbounded synthetic fixtures retain their historical
-    /// permissive behavior. Two consumers:
-    /// - an aircraft's Unlimbo Z ([`Self::unlimbo_z`]), as AircraftClass::
-    ///   Unlimbo asks it through `0x005785F0` (`0x00414352`);
-    /// - VERA's gate before Mark(PUT) for [`PlacementEvidence::EvaluateMark`]
-    ///   outside the `0x00A8E7AC` scope.
-    ///
-    /// RESIDUAL (#2393): the gate has no native counterpart. No Unlimbo layer
-    /// refuses on the playfield: Building (`0x00440580..0x004415E6`), Techno
-    /// (`0x006F6CA0`) and Object (`0x005F4EC0`), nor the Foot layers (see
-    /// [`PlacementEvidence::FootEntryAdmitted`]). With rules only a building
-    /// reaches it, since a Foot's admission comes back converted. Trigger: a
-    /// building revealed outside the scope whose origin Cell is outside the
-    /// playfield. Effect: the placement fails here, where native's Unlimbo
-    /// places it unless its caller refused first; those callers' own checks
-    /// were not traced. Frequency not counted. Downstream, the caller's
-    /// failure path runs instead of a placed building.
+    /// origin Cell, which AircraftClass::Unlimbo asks through `0x005785F0`
+    /// (`0x00414352`) for its Z ([`Self::unlimbo_z`]). Unbounded synthetic
+    /// fixtures retain their historical permissive behavior.
     fn reveal_position_is_in_playfield(
         &self,
         position: RevealPosition,
@@ -4039,6 +4030,10 @@ impl Simulation {
             .release_foot_air_tracker_before_limbo(stable_id);
         #[cfg(feature = "ares")]
         self.limbo_ares_attach_effects(stable_id, context.rules());
+        // Techno Remove6F6AC9 ->1004B140/1004B1A9 flushes even a repeated
+        // Limbo, before the base's alive/InLimbo and sight-release branches.
+        #[cfg(feature = "ares")]
+        self.flush_bounty_display(stable_id, context.rules(), context.effects(), true);
         if self
             .substrate
             .entities
@@ -4499,45 +4494,77 @@ impl Simulation {
         (death_effects, under_attack_events)
     }
 
-    /// The Stun of TechnoClass::ReceiveDamage's death arm (`0x00702210`),
-    /// after the death sounds and before the debris. Units, Infantry and
-    /// Aircraft take `FootClass::Stun @ 0x004D5660`: the class setter's NULL
-    /// destination (`0x004D5669`, [`Self::assign_null_destination`]), Path[0]
-    /// = -1 (`0x004D5673`) and `Stop_Driver` (vtable `+0x500`), which is
-    /// Foot's `0x004D55C0` for a Unit or an Aircraft, the locomotor's
-    /// `Stop_Moving` ([`Self::locomotor_stop_moving`]), and Infantry's
-    /// `0x0051DAF0` ([`Self::infantry_stop_driver`]). `TechnoClass::Stun @
-    /// 0x006FCD40` follows: Assign_Target(NULL), a second NULL destination
-    /// (`0x006FCD55`), RADIO OVER_OUT to every contact (`+0x280(3)`),
-    /// SpawnManager Kill_All_Spawns `0x006B7100` and ClearAllTargets
-    /// `0x006B7BB0`, Detach_All(1), and Deselect.
-    ///
-    /// Each accepted NULL destination reaches the locomotor's `Stop_Moving`
-    /// through Foot's null arm, so a moving Jumpjet stops up to three times.
-    /// A Jumpjet Unit's keeps a moving wreck flying to the cell under it and
-    /// lifts a descent back into the climb, so `Process`'s crash latch
-    /// engages wherever the kill found it. Unit `0x00741970` returns at once
-    /// without a NavCom (its `+0x1F8` override down), so the NavCom the
-    /// Stop_Driver's re-target writes is what the second NULL destination
-    /// clears. A Jumpjet Infantry's placement draws on the Scenario RNG each
-    /// time his moving byte is set, and his Stop_Driver's Do_Action at Health
-    /// 0 re-enters Stop_Driver once more when it accepts. Native execution:
-    /// `tools/spatial_oracle/jumpjet_infantry_crash`.
-    ///
-    /// A lifted Foot (`+0x6AD`, Magnetron-held) skips the spawn calls and
-    /// Detach_All (`0x006FCD79`). On the death path the spawn calls repeat
-    /// the Destroy's owner arm and find nothing left to kill. Detach_All(1) repeats the broadcast the killing hit's Destroy
-    /// already made (on a re-entered death arm, `0x0070202E..0x00702035`, that
-    /// was an earlier call). The walk is not repeated: every Target write
-    /// since then refused the Health-0 object (the setter through
-    /// `assign_target_commits`, including the Destroy walk's own Restores; the
-    /// scans, orders and legacy retaliation filter Health 0 themselves), so no
-    /// listener can hold it again. The Foot prelude's contact-0 OVER_OUT is
-    /// covered by the OVER_OUT to every contact. A living object's Stun (a
-    /// sinking hull, a retreating aircraft leaving the map) runs the walk.
-    /// Native execution of an Aircraft's: `tools/spatial_oracle/fly_stop`'s
-    /// Stun rows, replayed by `fly_process_tests::fly_death_stun_matches_native_rows`.
-    pub(crate) fn techno_death_stun(&mut self, stable_id: u64, context: UninitContext<'_>) {
+    /// Dispatch the virtual `Stun` slot to its native class layer. Foot
+    /// objects take `FootClass::Stun @ 0x004D5660` before the shared
+    /// `TechnoClass::Stun @ 0x006FCD40`; non-Foot Technos enter the Techno
+    /// body directly. This is shared by death, sinking, crash, lift release
+    /// and sale callers, so only the Foot override runs its driver prefix.
+    pub(crate) fn stun(&mut self, stable_id: u64, context: UninitContext<'_>) {
+        let Some(category) = self
+            .substrate
+            .entities
+            .get(stable_id)
+            .map(|entity| entity.category())
+        else {
+            return;
+        };
+        if category.is_foot() {
+            self.foot_stun(stable_id, context);
+        } else {
+            self.techno_stun(stable_id, context);
+        }
+    }
+
+    /// `FootClass::Stun @ 0x004D5660`: Set_Destination(NULL, 1)
+    /// (`0x004D5667`), Path[0] = -1 (`0x004D5673`), Stop_Driver through
+    /// vtable `+0x500` (Unit/aircraft locomotor stop or Infantry
+    /// `0x0051DAF0`), then the base Techno stun.
+    fn foot_stun(&mut self, stable_id: u64, context: UninitContext<'_>) {
+        let Some(entity) = self.substrate.entities.get(stable_id) else {
+            return;
+        };
+        let category = entity.category();
+        debug_assert!(category.is_foot());
+        self.assign_null_destination(
+            stable_id,
+            context.rules,
+            context.registry,
+            context.effects(),
+        );
+        if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
+            entity.clear_live_path_head();
+        }
+        if category == EntityCategory::Infantry {
+            if let Err(cause) = self.infantry_stop_driver(
+                stable_id,
+                context.rules(),
+                context.registry,
+                context.effects(),
+            ) {
+                log::debug!("infantry {stable_id} Stun Stop_Driver: {cause}");
+            }
+        } else if let Err(cause) = self.locomotor_stop_moving(
+            stable_id,
+            context.rules,
+            context.registry,
+            context.effects(),
+        ) {
+            log::debug!("{stable_id} Stun Stop_Driver: {cause}");
+        }
+        self.techno_stun(stable_id, context);
+    }
+
+    /// `TechnoClass::Stun @ 0x006FCD40`: Assign_Target(NULL),
+    /// Set_Destination(NULL, 1), RADIO OVER_OUT (code 3) to every contact,
+    /// then its Foot-class gate. Techno ctor `0x006F2B40` ORs AbstractFlags
+    /// bit 0 at `0x006F3228`; Foot ctor `0x004D31E0` ORs bit 2 (`4`) at
+    /// `0x004D34DA`, so the native `+0x14 & 4` test identifies Foot, not an
+    /// active-state predicate. Only a Foot with `+0x6AD == 0` runs
+    /// Kill_All_Spawns (`0x006B7100`), ClearAllTargets (`0x006B7BB0`) and
+    /// Detach_All(1); Deselect follows on every class. Foot's constructor
+    /// clears `+0x6AD` at `0x004D3414`; ImbueLocomotor sets the lift latch at
+    /// `0x00710352`, and the Jumpjet landing paths clear it.
+    fn techno_stun(&mut self, stable_id: u64, context: UninitContext<'_>) {
         let Some(entity) = self.substrate.entities.get(stable_id) else {
             return;
         };
@@ -4546,37 +4573,6 @@ impl Simulation {
             && entity.locomotor.as_ref().is_some_and(|locomotor| {
                 locomotor.active_kind() == crate::rules::locomotor_type::LocomotorKind::Walk
             });
-        if matches!(
-            category,
-            EntityCategory::Unit | EntityCategory::Infantry | EntityCategory::Aircraft
-        ) {
-            self.assign_null_destination(
-                stable_id,
-                context.rules,
-                context.registry,
-                context.effects(),
-            );
-            if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
-                entity.clear_live_path_head();
-            }
-            if category == EntityCategory::Infantry {
-                if let Err(cause) = self.infantry_stop_driver(
-                    stable_id,
-                    context.rules(),
-                    context.registry,
-                    context.effects(),
-                ) {
-                    log::debug!("infantry {stable_id} Stun Stop_Driver: {cause}");
-                }
-            } else if let Err(cause) = self.locomotor_stop_moving(
-                stable_id,
-                context.rules,
-                context.registry,
-                context.effects(),
-            ) {
-                log::debug!("{stable_id} Stun Stop_Driver: {cause}");
-            }
-        }
         if walking_infantry {
             let _ = self.assign_target_represented(
                 stable_id,
@@ -4598,43 +4594,23 @@ impl Simulation {
             return;
         }
         crate::sim::radio::broadcast_break(self, stable_id, context.rules(), context.effects());
-        // `0x006FCD6B..0x006FCD79`: a lifted Foot keeps its spawns, its spawns'
-        // targets and its listeners.
-        let lifted = self
+        // `0x006FCD6B..0x006FCD79`: a lifted Foot keeps its spawns, their
+        // targets and its listeners. The `+0x14 & 4` test guards the whole
+        // block before the Foot-only `+0x6AD` read.
+        let foot_lifted = self
             .substrate
             .entities
             .get(stable_id)
-            .is_some_and(|entity| {
-                matches!(
-                    entity.category(),
-                    EntityCategory::Unit | EntityCategory::Infantry | EntityCategory::Aircraft
-                ) && entity.lift.swap_active()
-            });
-        if lifted {
-            if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
-                entity.selection.deselect();
-            }
-            return;
-        }
-        crate::sim::spawn_manager::kill_all_spawns_with_context(self, stable_id, context);
-        crate::sim::spawn_manager::clear_all_spawn_targets(
-            self,
-            stable_id,
-            context.rules(),
-            context.registry(),
-            context.effects(),
-        );
-        // A living object's Stun cannot use the Health-0 elision above: its
-        // Techno6FCD9B Detach_All(1) runs, and self and other pointer-expiry
-        // callbacks observe the live object. Unit737E58 repeats Stun after
-        // restoring Health 1/+3CD, warp sinking stuns a living hull, and a
-        // retreating aircraft leaving the map is stunned alive (Fly 4CD5D7).
-        if self
-            .substrate
-            .entities
-            .get(stable_id)
-            .is_some_and(|entity| entity.health.current() != 0)
-        {
+            .is_some_and(|entity| entity.category().is_foot() && entity.lift.swap_active());
+        if category.is_foot() && !foot_lifted {
+            crate::sim::spawn_manager::kill_all_spawns_with_context(self, stable_id, context);
+            crate::sim::spawn_manager::clear_all_spawn_targets(
+                self,
+                stable_id,
+                context.rules(),
+                context.registry(),
+                context.effects(),
+            );
             self.detach_all(stable_id, true, context);
         }
         if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
@@ -4683,6 +4659,9 @@ impl Simulation {
     /// VERA-only: feeds the expiry-listener index (`ExpiryListeners`) so the
     /// `0x007258D0` broadcast skips entities; the listener's fields are the truth.
     pub(super) fn entity_expiry_holds(listener: &GameEntity, mut name: impl FnMut(u64)) -> bool {
+        if let Some(anim) = listener.parachute_animation() {
+            name(anim);
+        }
         if let Some(anim) = listener.emp_sparkle() {
             name(anim);
         }
@@ -5095,6 +5074,19 @@ impl Simulation {
         registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
         effects: FrameEffects<'_>,
     ) {
+        // ObjectClass::PointerExpired5F5268 clears +88 regardless of control.
+        if self
+            .substrate
+            .entities
+            .get(listener_id)
+            .is_some_and(|listener| listener.parachute_animation() == Some(expired_id))
+        {
+            self.substrate
+                .entities
+                .get_mut(listener_id)
+                .unwrap()
+                .parachute_animation_expired(expired_id);
+        }
         let Some(listener) = self.substrate.entities.get(listener_id) else {
             return;
         };
@@ -5595,6 +5587,8 @@ impl Simulation {
             .entities_reached_by(&mut self.substrate.entities, expired_id);
         for owner in holders {
             if let Some(entity) = self.substrate.entities.get_mut(owner) {
+                // Techno's Anim callback710455 reaches Object5F6DA0.
+                entity.parachute_animation_expired(expired_id);
                 entity.emp_anim_pointer_expired(expired_id);
                 #[cfg(feature = "ares")]
                 entity.attached_effect_anim_expired(expired_id);
@@ -5757,9 +5751,12 @@ impl Simulation {
             return;
         };
 
-        // BuildingLight436A00 clears parent/target for either expiry control.
-        // These nullable-field writes commute with the other listener clears.
-        self.substrate.spotlights_pointer_expired(expired_id);
+        // BuildingLight436A00; Ares1004EBC0 preserves a cloaking parent's
+        // link on control0, while the target clear remains unconditional.
+        self.substrate.spotlights_pointer_expired(
+            expired_id,
+            control == PointerExpiryControl::Uninit,
+        );
 
         #[cfg(any(test, feature = "test-support"))]
         if let Some(smudge) = self

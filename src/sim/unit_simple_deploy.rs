@@ -220,7 +220,7 @@ impl Simulation {
         );
         #[cfg(feature = "ares")]
         if deploying {
-            self.ares_convert_on_deploy(id, rules);
+            self.ares_convert_on_deploy(id, rules, effects);
         }
         sound
     }
@@ -230,7 +230,7 @@ impl Simulation {
     /// brings campaign reinforcements as `Selectable=no` stand-ins that a
     /// Deploy script converts into the playable type.
     #[cfg(feature = "ares")]
-    fn ares_convert_on_deploy(&mut self, id: u64, rules: &RuleSet) {
+    fn ares_convert_on_deploy(&mut self, id: u64, rules: &RuleSet, effects: FrameEffects<'_>) {
         let Some(entity) = self.substrate.entities.get(id) else {
             return;
         };
@@ -242,13 +242,13 @@ impl Simulation {
             return;
         }
         let Some(target) = self
-            .object_type(entity.type_ref(), rules)
-            .and_then(|object| object.convert_deploy())
-            .map(str::to_owned)
+            .entity_object_type(entity, rules)
+            .and_then(|object| object.deploy_conversion())
+            .cloned()
         else {
             return;
         };
-        if self.ares_convert_type(id, &target, rules)
+        if self.convert_techno_type(id, &target, rules, effects)
             && let Some(entity) = self.substrate.entities.get_mut(id)
         {
             entity.mission_leaf.set_unit_deployed(0);

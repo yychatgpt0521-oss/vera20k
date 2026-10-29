@@ -374,12 +374,6 @@ impl App {
             .refresh_multiplayer_country_catalog(&state.process_assets);
     }
 
-    /// A right-panel menu page (Single Player `0x100` or Movies & Credits
-    /// `0x101`) owns the `MainMenu` screen.
-    pub(super) fn menu_page_active(state: &AppState) -> bool {
-        crate::app::frontend::menu_page_render::ActiveMenuPage::from_state(state).is_some()
-    }
-
     /// The score page `0x108` owns the result screen once its model is set
     /// and its art and the shell chrome exist; otherwise the result screen
     /// uses the asset-independent status card when retail score art is absent.
@@ -429,6 +423,7 @@ impl App {
                 assets,
                 model.side,
                 crate::app::frontend::shell_layout::art_key_screen_width(state),
+                state.process_assets.side_score_art(model.side),
             )
         });
         state.frontend.campaign_score_page = None;
@@ -465,6 +460,7 @@ impl App {
                 assets,
                 side,
                 crate::app::frontend::shell_layout::art_key_screen_width(state),
+                state.process_assets.side_score_art(side),
             )
         });
         if state.frontend.campaign_score_art.is_none() {
@@ -481,6 +477,12 @@ impl App {
             enemies_destroyed_label: resolve_csf(state, "GUI:HeadsTaken").into_owned(),
         };
         let now = Instant::now();
+        // ScoreDialog_Handle_ScoreThemeA/B (0x1002F920/0x1002F9A0) replace the
+        // literal the dialog pushes with the side's par-branch theme.
+        let theme = model
+            .theme
+            .clone()
+            .unwrap_or_else(|| crate::app::match_runtime::scenario_exit::SCORE_THEME.to_owned());
         let page = CampaignScorePage::open(model, texts, now);
         state.frontend.campaign_score_page = Some(page);
         state.frontend.shell_first_paint_slide = None;
@@ -490,10 +492,10 @@ impl App {
             false,
         );
         // gamemd StandaloneScore dialog proc6C8FF0, WM_INIT6C9357..6C936C:
-        // SCORE starts here, after Victory685928's Win movie has returned.
+        // the theme starts here, after Victory685928's Win movie has returned.
         if let Some(assets) = state.process_assets.manager() {
             let wall_ms = crate::app::match_runtime::frame_pacer::wall_clock_ms();
-            let _ = state.audio.play_theme("SCORE", assets, wall_ms);
+            let _ = state.audio.play_theme(&theme, assets, wall_ms);
         }
     }
 
@@ -512,6 +514,7 @@ impl App {
                 assets,
                 model.side,
                 crate::app::frontend::shell_layout::art_key_screen_width(state),
+                state.process_assets.side_score_art(model.side),
             )
         });
         if state.frontend.campaign_score_art.is_none() {
@@ -776,7 +779,11 @@ impl App {
     /// admitted network return owner.
     pub(crate) fn resume_shell_after_match(state: &mut AppState) {
         if state.frontend.external_launch {
-            Self::start_quit_cascade(state);
+            // A relay launch first reports its result to the match service;
+            // its live service starts the same quit once that settles.
+            if !crate::app::shell_wol::end_spawned_match(state) {
+                Self::start_quit_cascade(state);
+            }
             return;
         }
         if state.match_state.session.network_return_context().is_some() {

@@ -22,9 +22,12 @@ pub(crate) mod in_game_options;
 pub(crate) mod messages;
 pub(crate) mod pause_menu;
 pub(crate) mod planning_mode;
+pub(crate) mod precedence;
 pub(crate) mod radar;
 pub(crate) mod sidebar_eva;
 pub(crate) mod state;
+#[cfg(feature = "phobos")]
+pub(crate) mod sw_sidebar;
 pub(crate) mod superweapon_cameo;
 pub(crate) mod page_user;
 pub(crate) mod taunt;

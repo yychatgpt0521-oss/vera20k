@@ -153,6 +153,7 @@ pub(super) const fn action_is_ported(action_id: i32) -> bool {
             | 26
             | 27
             | 30
+            | 31
             | 34
             | 37
             | 38
@@ -177,7 +178,7 @@ pub(super) const fn action_is_ported(action_id: i32) -> bool {
             | 62
             | 63
             | 64
-    )
+    ) || (cfg!(feature = "ares") && matches!(action_id, 67 | 68))
 }
 
 /// A member's NavCom as a team target, for `Distance`.
@@ -197,8 +198,8 @@ impl Simulation {
     /// archive target, unless the TeamType is `TransportsReturnOnUnload=`
     /// and the member carries passengers; a script run past its end
     /// destroys the team; the mission target and move target are cleared.
-    /// Otherwise the move target falls back to the mission target. Actions
-    /// outside `0..=0x40` (and the -1 before the first) do nothing.
+    /// Otherwise the move target falls back to the mission target. Stock
+    /// actions outside `0..=0x40` do nothing; an Ares build also admits68.
     pub(super) fn team_step_script(
         &mut self,
         team_id: u64,
@@ -271,7 +272,7 @@ impl Simulation {
                 argument: 0,
             },
         );
-        if action.action_id as u32 > 0x40 {
+        if action.action_id as u32 > 0x40 && !(cfg!(feature = "ares") && action.action_id == 68) {
             return;
         }
         self.team_run_action(team_id, action, first, rules, registry, frame_effects);
@@ -555,7 +556,7 @@ impl Simulation {
                     team.advance_pending = true;
                 }
             }
-            64 => {
+            64 | 67 if action.action_id == 64 || cfg!(feature = "ares") => {
                 //6E9F0D -> each member's vt34C/Foot4DFE00. Cache the next
                 //member before its seek callback; successful entrants leave
                 //the Team via the shared6EA870 owner with no_idle=true.
@@ -570,6 +571,12 @@ impl Simulation {
                         .teams
                         .get(&team_id)
                         .and_then(|team| team.next_member_after(current));
+                    // Installed Ares dispatcher1003A110 sets Ext+B0 for67,
+                    // clears it for64, then calls the same Foot vt+34C.
+                    #[cfg(feature = "ares")]
+                    if let Some(foot) = self.substrate.entities.get_mut(current) {
+                        foot.vehicle_driver.set_vehicle_seek(action.action_id != 64);
+                    }
                     if self.foot_enter_nearest_occupiable(current, rules, registry, frame_effects) {
                         self.team_remove_member(team_id, current, true, rules, frame_effects);
                     }
@@ -763,6 +770,63 @@ impl Simulation {
                     team.advance_pending = true;
                 }
             }
+            31 => {
+                // TeamClass::AI, original gamemd 6E99FD..6E9A6C:
+                // ReceiveDamage(&HealthCopy, 0, C4Warhead, NULL, 1, 0, NULL)
+                // for living, marked, non-limbo members, until a pass calls
+                // no receiver. Damage/death weapons finish before reading
+                // the successor. Remove_Member6EA997 clears that link, so
+                // restart from the live head rather than caching stale ids.
+                let warhead = self.interner.intern(&rules.bridge_warheads.c4_name);
+                loop {
+                    let mut called_receiver = false;
+                    let mut member = self
+                        .team_script_vm
+                        .teams
+                        .get(&team_id)
+                        .and_then(|team| team.members().next());
+                    while let Some(current) = member {
+                        let health = self.substrate.entities.get(current).and_then(|entity| {
+                            (entity.health.current() > 0
+                                && entity.lifecycle.object_alive()
+                                && entity.lifecycle.cell_marked()
+                                && !entity.lifecycle.in_limbo())
+                            .then_some(entity.health.current())
+                        });
+                        if let Some(health) = health {
+                            self.commit_direct_damage_receiver(
+                                rules,
+                                registry,
+                                crate::sim::combat::EntityDamageEvent::direct_receiver(
+                                    current,
+                                    health,
+                                    0,
+                                    crate::sim::combat::RAD_NO_ATTACKER,
+                                    None,
+                                    warhead,
+                                    crate::sim::combat::ReceiverCallFlags {
+                                        ignore_defenses: true,
+                                        arg6: false,
+                                    },
+                                ),
+                                frame_effects,
+                            );
+                            called_receiver = true;
+                        }
+                        member = self
+                            .team_script_vm
+                            .teams
+                            .get(&team_id)
+                            .and_then(|team| team.next_member_after(current));
+                    }
+                    if !called_receiver {
+                        break;
+                    }
+                }
+                if let Some(team) = self.team_script_vm.teams.get_mut(&team_id) {
+                    team.advance_pending = true;
+                }
+            }
             43 => Self::team_action_wait_until_loaded(
                 &self.interner,
                 &self.substrate,
@@ -865,6 +929,33 @@ impl Simulation {
                     }
                 }
                 if let Some(team) = self.team_script_vm.teams.get_mut(&team_id) {
+                    team.advance_pending = true;
+                }
+            }
+            #[cfg(feature = "ares")]
+            68 => {
+                // Installed TeamClass_Update hook6E9443 ->1003A310 ->
+                // dispatch10039C30/action6810039D7C: linked members use
+                // their own current Type's Convert.Script pointer. The
+                // argument is ignored, and even an empty team completes.
+                let members: Vec<_> = self
+                    .team_script_vm
+                    .teams
+                    .get(&team_id)
+                    .map(|team| team.members().collect())
+                    .unwrap_or_default();
+                for member in members {
+                    let target = self.substrate.entities.get(member).and_then(|actor| {
+                        self.entity_object_type(actor, rules)
+                            .and_then(|object| object.script_conversion())
+                            .cloned()
+                    });
+                    if let Some(target) = target {
+                        self.convert_techno_type(member, &target, rules, frame_effects);
+                    }
+                }
+                if let Some(team) = self.team_script_vm.teams.get_mut(&team_id) {
+                    //10039D55: advance next visit, not recursively this tick.
                     team.advance_pending = true;
                 }
             }

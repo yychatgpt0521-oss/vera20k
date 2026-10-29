@@ -8,7 +8,9 @@
 //! - Part of the app layer — may depend on everything.
 
 use crate::app::AppState;
-use crate::app::presentation::sidebar_render::{current_sidebar_theme, current_sidebar_view};
+use crate::app::presentation::sidebar_render::{
+    current_sidebar_side, current_sidebar_theme, current_sidebar_view,
+};
 use crate::assets::csf_file::{CsfArg, format_csf};
 use crate::map::entities::EntityCategory;
 use crate::render::batch::SpriteInstance;
@@ -18,6 +20,11 @@ use crate::ui::tooltips::{TipRect, TipRegion};
 /// In-game tip ids mirror the gamemd id space: button ids as-is, cameo slots
 /// at 1000+.
 pub(crate) const CAMEO_TIP_ID_BASE: u32 = 1000;
+
+/// Phobos left superweapon sidebar cameo tips, one id per visible slot. Kept
+/// clear of the right sidebar's cameo range.
+#[cfg(feature = "phobos")]
+pub(crate) const SW_SIDEBAR_TIP_ID_BASE: u32 = 2000;
 
 /// CSF label carrying the cameo tooltip money format. Retail English value is
 /// `"%s $%d"` — name, space, currency sign, cost.
@@ -188,7 +195,7 @@ fn tactical_world_tip_text(
     world: (f32, f32),
     cursor_coordinates: bool,
 ) -> String {
-    tactical_world_tip_text_sampled(view, rules, csf, world, cursor_coordinates, None)
+    tactical_world_tip_text_sampled(view, rules, csf, world, cursor_coordinates, None, None)
 }
 
 fn tactical_world_tip_text_sampled(
@@ -198,6 +205,7 @@ fn tactical_world_tip_text_sampled(
     world: (f32, f32),
     cursor_coordinates: bool,
     interpolation: Option<&crate::app::presentation::interpolation::RenderInterpolation>,
+    translucent_viewer: Option<crate::sim::intern::InternedId>,
 ) -> String {
     let Some((terrain, viewer)) = view.resolved_terrain().zip(view.session().current_house())
     else {
@@ -226,6 +234,7 @@ fn tactical_world_tip_text_sampled(
         crate::app::input::entity_pick::PresentedWorld {
             sim,
             interpolation: interpolation.unwrap_or(&native),
+            translucent_viewer,
         },
         &order,
         Some(view.fog()),
@@ -330,6 +339,15 @@ fn unit_turret_tip_text(
     object: &crate::rules::object_type::ObjectType,
     csf: Option<&crate::assets::csf_file::CsfFile>,
 ) -> String {
+    // Ares UnitGetUIName746B89 ->1004BF20 returns the configured full
+    // weapon-mode name before the original passenger/turret formatter.
+    #[cfg(feature = "ares")]
+    if let Some(label) = object
+        .gunner_turrets
+        .weapon_ui_name(entity.current_weapon_number())
+    {
+        return crate::assets::csf_file::type_ui_name(Some(label), csf);
+    }
     let tip = |key: &str| csf.map_or_else(|| key.to_owned(), |csf| csf.text(key).into_owned());
     let passenger = entity
         .passenger_role
@@ -350,10 +368,18 @@ fn unit_turret_tip_text(
         },
         None => tip("Tip:Rocket"),
     };
-    format!(
-        "{word} {}",
-        crate::assets::csf_file::type_ui_name(object.ui_name.as_deref(), csf)
-    )
+    let own = crate::assets::csf_file::type_ui_name(object.ui_name.as_deref(), csf);
+    #[cfg(feature = "ares")]
+    {
+        // Ares spacing hook746C55 ->1004BF90 separates nonempty pieces only.
+        if word.is_empty() {
+            return own;
+        }
+        if own.is_empty() {
+            return word;
+        }
+    }
+    format!("{word} {own}")
 }
 
 fn tactical_tip_text(state: &AppState) -> String {
@@ -376,6 +402,8 @@ fn tactical_tip_text(state: &AppState) -> String {
         input.cursor_x,
         input.cursor_y,
     );
+    let translucent_viewer =
+        crate::app::presentation::instances::translucent_fog_viewer(state, view.simulation());
     tactical_world_tip_text_sampled(
         view,
         rules,
@@ -383,6 +411,7 @@ fn tactical_tip_text(state: &AppState) -> String {
         world,
         input.cursor_coordinates,
         Some(&state.match_state.match_presentation.interpolation),
+        translucent_viewer,
     )
 }
 
@@ -578,6 +607,41 @@ fn sync_in_game_regions(state: &mut AppState) {
             text,
         });
     }
+    // Phobos left superweapon sidebar: `SWButtonClass` shows the same super
+    // weapon name/cost tip as the right cameo.
+    #[cfg(feature = "phobos")]
+    {
+        let sw = &state.match_state.match_presentation.sw_sidebar;
+        if sw.ui.enabled && sw.expanded {
+            for (index, entry) in sw.entries.iter().enumerate() {
+                let text = dynamic_tip_text(cursor, || {
+                    let amount = state
+                        .rules()
+                        .and_then(|rules| {
+                            let super_type = rules.super_weapon(&entry.type_id)?;
+                            Some(crate::sim::superweapon::financial_type(rules, super_type))
+                        })
+                        .map_or(0, |super_type| super_type.money_amount);
+                    let money_format = state
+                        .process_assets
+                        .csf
+                        .as_ref()
+                        .map(|csf| csf.text(CAMEO_TIP_MONEY_FORMAT));
+                    superweapon_money_tip(money_format.as_deref(), &entry.view.display_name, amount)
+                });
+                regions.push(TipRegion {
+                    id: SW_SIDEBAR_TIP_ID_BASE + index as u32,
+                    rect: TipRect::new(
+                        entry.rect.x.round() as i32,
+                        entry.rect.y.round() as i32,
+                        entry.rect.w.round() as i32,
+                        entry.rect.h.round() as i32,
+                    ),
+                    text,
+                });
+            }
+        }
+    }
     state
         .match_state
         .match_presentation
@@ -601,8 +665,23 @@ pub(crate) fn build_tooltip_instances(
         return (Vec::new(), Vec::new(), Vec::new());
     }
     // gamemd draws the tip in the current sidebar text colour, so the same
-    // side-dependent colour the cameo labels use — not a fixed yellow.
-    let tint = crate::render::sidebar_text::side_highlight_color(current_sidebar_theme(state));
+    // side-dependent colour the cameo labels use — not a fixed yellow. Ares
+    // `[Side] ToolTipColor=` (`SideExt+80`, applied by
+    // `Game_InitializeToolTipColor @ 0x1002F360`) replaces it.
+    let tint = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .and_then(|runtime| {
+            runtime
+                .resources
+                .rules
+                .side_tooltip_color(current_sidebar_side(state))
+        })
+        .map(|rgb| rgb.map(|channel| f32::from(channel) / 255.0))
+        .unwrap_or_else(|| {
+            crate::render::sidebar_text::side_highlight_color(current_sidebar_theme(state))
+        });
     tooltip_quads(
         &state.renderer.bit_font,
         &tip.text,

@@ -4,7 +4,7 @@
 //! callers share one constructor. Child allocation still belongs to the parent
 //! store transaction in world_spawn, after these manager descriptors exist.
 
-use super::{GeneratedTechnoInitError, object_uses_voxel};
+use super::GeneratedTechnoInitError;
 use crate::map::entities::EntityCategory;
 use crate::rules::locomotor_type::LocomotorKind;
 use crate::rules::object_type::ObjectType;
@@ -79,7 +79,7 @@ impl Simulation {
         // Original copy slices: object_health corpus / constructors.
         let health = Health::new(obj.strength);
         let category = EntityCategory::from(obj.category);
-        let uses_voxel = object_uses_voxel(type_id, obj, rules);
+        let uses_voxel = GameEntity::object_uses_voxel(type_id, obj, rules);
         let sight_range = (obj.sight.max(0) as u16).min(MAX_SIGHT_RANGE);
         let stable_id = self.substrate.allocate_stable_id();
         let owner_iid = self.interner.intern(owner);
@@ -154,7 +154,7 @@ impl Simulation {
             ge.initialize_building_loss_index(i32::from(index.0));
         }
 
-        stamp_scoring_flags(ge, obj, rules);
+        ge.refresh_type_projection(obj, rules);
         // Phobos `TechnoClass_Init` (`Hooks.cpp:297..301`): allocate the
         // ShieldClass only when the bound type resolves and its `Strength` is
         // above zero; `SetHP(InitialStrength.Get(Strength))` clamps at creation.
@@ -170,9 +170,6 @@ impl Simulation {
                 ty.strength(),
             ));
         }
-        if let Some(object) = obj {
-            ge.sight.stamp_type_sight(object.sight);
-        }
         // The class constructor's one `+0x388` rate write (`Set_ROT`): `ROT=`
         // for a unit (`0x00735579`), an aircraft (`0x00413FE7`) and a building
         // (`BuildingClass::Init`, `0x00442CA5`, without testing `Turret=`: a
@@ -181,12 +178,7 @@ impl Simulation {
         if let Some(obj) = obj {
             ge.set_body_facing_rot(obj.turret_rot);
         }
-        // `+0x3A0`: a turreted unit's turret and every aircraft's Secondary. A
-        // building aims its `+0x388`.
-        if let Some(obj) = obj.filter(|obj| {
-            (obj.has_turret && category != EntityCategory::Structure)
-                || category == EntityCategory::Aircraft
-        }) {
+        if let Some(obj) = obj.filter(|obj| GameEntity::type_has_secondary_facing(obj, category)) {
             let mut secondary = crate::sim::movement::FacingClass::new(initial, obj.turret_rot);
             if category == EntityCategory::Aircraft {
                 // Aircraft413FD2..414015 supplies ROT to BOTH controllers;
@@ -237,9 +229,6 @@ impl Simulation {
             ge.set_gunner_weapon(0, obj);
         }
         ge.initialize_voxel_recoil(obj.recoil);
-        ge.crushable_facts = CrushableFacts::stamp(obj);
-        ge.mover_facts = MoverFacts::stamp(obj);
-        ge.removal_facts.stamp_occupier(obj.occupier);
         if category == EntityCategory::Structure && obj.gate {
             ge.building_gate = Some(crate::sim::game_entity::BuildingGateRuntime::at_frame(
                 session.binary_frame(),
@@ -311,7 +300,6 @@ impl Simulation {
             );
         }
 
-        stamp_building_cell_profile(ge, Some(obj));
         // TechnoClass::Init_Managers — manager-owned children are committed
         // after this parent enters the limbo store and before its Unlimbo.
         ge.capture_manager = crate::sim::capture_manager::init_capture_manager(obj, rules);
@@ -332,13 +320,16 @@ impl Simulation {
             && obj.perma_disguise
             && let Some(side) = houses.get(&ge.owner()).map(|h| h.side_index())
         {
-            let worn = rules.general.infantry_disguises[match side {
-                0 => 0,
-                1 => 1,
-                _ => 2,
-            }]
-            .as_deref()
-            .map(|name| interner.intern(name));
+            let worn = match rules.side_disguise(side) {
+                Some(value) => value.map(|name| interner.intern(name)),
+                None => rules.general.infantry_disguises[match side {
+                    0 => 0,
+                    1 => 1,
+                    _ => 2,
+                }]
+                .as_deref()
+                .map(|name| interner.intern(name)),
+            };
             let owner = ge.owner();
             let frame = session.binary_frame();
             ge.disguise_mut(frame).wear_from_construction(worn, owner);
@@ -377,6 +368,31 @@ impl Simulation {
         if veteran {
             ge.veterancy.set_veteran();
         }
+    }
+}
+
+impl GameEntity {
+    /// Derived reads of the live Type pointer. Construction and Ares in-place
+    /// conversion10043740 share these caches without replaying constructors,
+    /// manager allocation, passenger setup or discovery-history writes.
+    pub(crate) fn refresh_type_projection(&mut self, object: Option<&ObjectType>, rules: &RuleSet) {
+        stamp_scoring_flags(self, object, rules);
+        if let Some(object) = object {
+            self.sight.stamp_type_sight(object.sight);
+            self.crushable_facts = CrushableFacts::stamp(object);
+            self.mover_facts = MoverFacts::stamp(object);
+            self.removal_facts.stamp_occupier(object.occupier);
+            stamp_building_cell_profile(self, Some(object));
+        }
+    }
+
+    /// Whether `barrel_facing` models the `+0x3A0` Secondary: a turreted
+    /// unit's turret and every aircraft's Secondary. A building aims its
+    /// `+0x388`, and `barrel_facing.is_some()` means "has a turret" to its
+    /// readers, so every other object keeps none.
+    pub(crate) fn type_has_secondary_facing(object: &ObjectType, category: EntityCategory) -> bool {
+        (object.has_turret && category != EntityCategory::Structure)
+            || category == EntityCategory::Aircraft
     }
 }
 
@@ -424,7 +440,7 @@ fn stamp_building_cell_profile(
 
 /// `Crushable=` and `DeployedCrushable=`, copied when the object is built for
 /// the crush passes (natively read through the type pointer). Only the
-/// construction stamp writes them.
+/// shared type projection writes them.
 ///
 /// Nothing reads the `DeployedCrushable=` copy: the deploy completion
 /// re-reads the type's key (`0x00520B3B`, `0x00520B9A`) and stamps the
@@ -748,95 +764,62 @@ impl TypeFacts {
 /// A Foot object owns its configured locomotor independently of the parsed
 /// `Speed=` scalar. `DriveLocomotionClass::Process @ 0x004B0500` and
 /// `ShipLocomotionClass::Process @ 0x0069FC10` consume their class-local state
-/// without a Speed gate. That state is therefore load-bearing at Speed=0,
-/// while Structures remain outside Foot and other zero-speed custom
-/// locomotors retain the existing inactive compatibility behavior.
+/// without a Speed gate. That state is therefore load-bearing at Speed=0.
+/// InfantryClass::Constructor517A50 creates and links its locomotor at
+/// 517B44..517BBA whenever its Type is nonnull, without a Speed test.
+/// Other zero-speed custom Foot classes retain their existing policy here.
 fn should_construct_locomotor(category: EntityCategory, object: &ObjectType) -> bool {
     object.speed > 0
-        || (matches!(
-            category,
-            EntityCategory::Unit | EntityCategory::Infantry | EntityCategory::Aircraft
-        ) && matches!(object.locomotor, LocomotorKind::Drive | LocomotorKind::Ship))
+        || category == EntityCategory::Infantry
+        || (matches!(category, EntityCategory::Unit | EntityCategory::Aircraft)
+            && matches!(object.locomotor, LocomotorKind::Drive | LocomotorKind::Ship))
 }
 
 #[cfg(test)]
 #[path = "perma_disguise_tests.rs"]
 mod perma_disguise_tests;
 
-#[cfg(feature = "ares")]
-impl Simulation {
-    /// Ares 3.0 type conversion (`Convert.Deploy`): `id` takes `new_type`'s
-    /// identity in place, keeping its stable id, owner, position, mission,
-    /// team, veterancy and health ratio. Its House counts move from the old
-    /// type to the new one, and the facts the constructor stamps from the
-    /// type ([`Self::install_techno_components`]) are stamped again from the
-    /// new one. Ares 3.0 is closed source; this follows its documented
-    /// behavior. Answers whether the type changed; a type of another class
-    /// is refused.
-    ///
-    /// RESIDUAL: a conversion between locomotors installs the new type's
-    /// fresh, stopping movement in progress; ammo resets only when the two
-    /// `Ammo=` differ; cargo, the spawn/capture/temporal managers and the
-    /// turret controller keep the old type's. Mental Omega's campaign
-    /// stand-ins (`HTNK2` -> `HTNK`) share all of these with their targets.
-    pub(crate) fn ares_convert_type(&mut self, id: u64, new_type: &str, rules: &RuleSet) -> bool {
-        let Some(entity) = self.substrate.entities.get(id) else {
-            return false;
-        };
-        let category = entity.category();
-        let owner = entity.owner();
-        let Some(old) = self.entity_object_type(entity, rules) else {
-            return false;
-        };
-        let Some(new) = rules
-            .object(new_type)
-            .filter(|new| EntityCategory::from(new.category) == category)
-        else {
-            log::warn!(
-                "Ares conversion of {} to [{new_type}] refused: no such type of its class",
-                self.interner.resolve(entity.type_ref())
-            );
-            return false;
-        };
-        Self::update_house_tracking(
-            &mut self.substrate,
-            &mut self.houses,
-            id,
-            crate::sim::house_tracking::HouseTracking::remove_tracking,
-        );
-        let new_ref = self.interner.intern(&new.id);
-        self.substrate.entities.change_type(id, new_ref);
-        let frame = self.session.binary_frame();
-        let entity = self
-            .substrate
-            .entities
-            .get_mut(id)
-            .expect("the converted entity is stored");
-        let health = entity.health.current();
-        if old.strength > 0 && health > 0 {
-            let scaled = i64::from(health) * i64::from(new.strength) / i64::from(old.strength);
-            entity.health.set((scaled as i32).max(1));
-        }
-        stamp_scoring_flags(entity, Some(new), rules);
-        entity.sight.stamp_type_sight(new.sight);
-        entity.set_body_facing_rot(new.turret_rot);
-        entity.crushable_facts = CrushableFacts::stamp(new);
-        entity.mover_facts = MoverFacts::stamp(new);
-        entity.removal_facts.stamp_occupier(new.occupier);
-        stamp_building_cell_profile(entity, Some(new));
-        if old.ammo != new.ammo {
-            entity.initialize_ammo_from_type(new);
-        }
-        if old.locomotor != new.locomotor && should_construct_locomotor(category, new) {
-            entity.locomotor = Some(LocomotorState::from_object_type(new, frame));
-        }
-        Self::update_house_tracking(
-            &mut self.substrate,
-            &mut self.houses,
-            id,
-            crate::sim::house_tracking::HouseTracking::add_tracking,
-        );
-        self.houses.request_house_tech_tree_recheck(owner);
-        true
-    }
+#[cfg(test)]
+#[test]
+fn zero_speed_infantry_keeps_walk_instance_through_spawn_and_save() {
+    use crate::rules::ruleset::RuleSet;
+    use crate::sim::movement::locomotor::LocomotorState;
+
+    let ini = crate::sim::arena_fixture::clear_ground_ini(
+        "[Countries]\n0=Americans\n1=Russians\n[InfantryTypes]\n0=STATIC\n\
+         [STATIC]\nStrength=100\nSpeed=0\nSpeedType=Foot\nMovementZone=Normal\n\
+         Locomotor={4A582744-9839-11d1-B709-00A024DDAFD1}\n",
+    );
+    let rules = RuleSet::from_ini(&ini).unwrap();
+    let mut sim = crate::sim::arena_fixture::rival_arena(&rules, 23);
+    let actor = sim
+        .spawn_object_at_height("STATIC", "Americans", 10, 10, 0, 0, &rules)
+        .unwrap();
+    let locomotor = sim
+        .substrate
+        .entities
+        .get_mut(actor)
+        .unwrap()
+        .locomotor
+        .as_mut()
+        .expect("Infantry517B44 constructs its locomotor even at Speed0");
+    assert_eq!(locomotor.active_kind(), LocomotorKind::Walk);
+    locomotor.power_off();
+    let saved = crate::sim::snapshot::GameSnapshot::save(&sim, 0, 0, "stationary-infantry", 0);
+    let restored = crate::sim::snapshot::GameSnapshot::load(&saved)
+        .unwrap()
+        .sim;
+    let locomotor: &LocomotorState = restored
+        .entities()
+        .get(actor)
+        .unwrap()
+        .locomotor
+        .as_ref()
+        .unwrap();
+    assert_eq!(locomotor.active_kind(), LocomotorKind::Walk);
+    assert!(
+        !locomotor.is_powered(),
+        "the actual saved instance survives"
+    );
+    assert_eq!(rules.object("STATIC").unwrap().speed, 0);
 }

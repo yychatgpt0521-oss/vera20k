@@ -35,8 +35,8 @@ pub(crate) fn resident_seed(state: &AppState) -> u32 {
 }
 
 impl App {
-    /// The chat join sink `007A6100` creates C9 (`0x7A6256`) for a joined
-    /// game channel with the local node's choices unset (`0x7A5890`). Like
+    /// The chat join sink `0x7A5890` creates C9 (`0x7A6256`) for a joined
+    /// game channel with the local node's choices unset. Like
     /// BD, the host's options arrive later; unlike BD, C9 never disables
     /// Accept and the sink's `005E9850` enables it.
     pub(crate) fn open_wol_joined_setup(
@@ -162,7 +162,7 @@ pub(crate) fn send_first_choices(state: &mut AppState) {
     );
 }
 
-/// The join sink `0x7A6100` for another user in this game channel. While a
+/// The join sink `0x7A5890` for another user in this game channel. While a
 /// start is pending (`[0xB77DEC]`, `[0xB77E28]` or `[0xB77E27]`) the joiner
 /// is kicked (API+0x54) after the PlayerJoined sound and gets no node
 /// (`0x7A631E..0x7A6348`). A guest appends an unbound node. The host binds
@@ -211,7 +211,12 @@ pub(crate) fn user_joined(state: &mut AppState, name: String) -> anyhow::Result<
 /// (`0x785764..0x785788`); after OnGameStart nothing more. Its node goes;
 /// the ready records clear and C9's Accept enables (`0x785C64..0x785CF5`);
 /// a guest whose operator left leaves the channel itself
-/// (`0x785CFA..0x785D1C`); the host republishes (`0x785D1F..0x785E81`).
+/// (`0x785CFA..0x785D1C`); the host clears readiness, sends the slot-name
+/// payload (`0x77DB90`) and publishes options (`0x5E32D0(1, 1)`) before the
+/// repaint (`0x783C80`, `0x785D1F..0x785E81`). It does not advertise the
+/// channel (`0x78F000`). The WOL adapter's one options snapshot includes the
+/// complete launch roster, so it carries both native payloads without a
+/// duplicate relay update.
 pub(crate) fn user_left(state: &mut AppState, name: &str, operator: bool) -> anyhow::Result<()> {
     play_player_left(state);
     if state
@@ -232,11 +237,9 @@ pub(crate) fn user_left(state: &mut AppState, name: &str, operator: bool) -> any
     };
     service::service_event(state, service::NetworkSetupEvent::ParticipantLeft { index })?;
     clear_guest_acceptance(state)?;
-    if state.match_state.session.host() {
-        queue(state, NetworkSetupRequest::PublishOptions);
-        queue(state, NetworkSetupRequest::Advertise);
-    } else if operator {
-        queue(state, NetworkSetupRequest::Leave);
+    let host = state.match_state.session.host();
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.record_remote_user_left(host, operator);
     }
     Ok(())
 }
@@ -720,6 +723,12 @@ pub(super) fn negotiated(state: &mut AppState, result: u8) -> anyhow::Result<()>
                 .as_mut()
                 .expect("setup owns protocol");
             protocol.wol_verify = None;
+            if protocol.external {
+                // No game channel or dialog: the launcher's room stays
+                // until the match's finish.
+                super::commit_start(state, seed);
+                return Ok(());
+            }
             protocol.requests.push(NetworkSetupRequest::Leave);
             state.frontend.skirmish_preview_texture = None;
             if super::quick_match(state) {

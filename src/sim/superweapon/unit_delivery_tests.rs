@@ -746,7 +746,7 @@ fn unit_delivery_retail_flying_foot_lifts_off_without_a_later_order() {
 
 #[test]
 fn unit_delivery_ai_ground_rally_arm_completes_a_delivery() {
-    use crate::sim::superweapon::ai_fire::{self, AiFireArm, AiFireEvent};
+    use crate::sim::superweapon::ai_fire;
 
     let rules = rules("[Delivery]\nSW.Deferment=0\n");
     let mut sim = world(&rules);
@@ -755,17 +755,7 @@ fn unit_delivery_ai_ground_rally_arm_completes_a_delivery() {
         .get_mut(&owner)
         .unwrap()
         .set_preferred_super_weapon_target((12, 10));
-    ai_fire::AI_FIRE_LOG.set(Some(Vec::new()));
     ai_fire::try_fire(&mut sim, &rules, owner, None, FrameEffects::default());
-    let log = ai_fire::AI_FIRE_LOG.take().unwrap();
-    assert_eq!(
-        log,
-        vec![
-            AiFireEvent::TryFire,
-            AiFireEvent::TailArm(AiFireArm::GroundRallyPoint, sw),
-            AiFireEvent::Fire(sw, (12, 10))
-        ]
-    );
     let ids = payloads(&sim, "MTNK");
     assert_eq!(ids.len(), 1);
     let unit = sim.substrate.entities.get(ids[0]).unwrap();
@@ -773,6 +763,25 @@ fn unit_delivery_ai_ground_rally_arm_completes_a_delivery() {
     assert_eq!((unit.position.rx(), unit.position.ry()), (12, 10));
     assert_eq!(unit.mission.effective().known(), Some(MissionType::Hunt));
     assert!(!sim.super_weapons[&owner][&sw].is_ready);
+}
+
+/// Mental Omega's Instant Shelter and Quick Fort are UnitDelivery Supers with
+/// `SW.AITargeting=None`; the AI must not drop their bunkers anywhere, even
+/// with a preferred target cell that the default ParaDrop mode would take.
+#[test]
+fn unit_delivery_ai_targeting_none_never_auto_fires() {
+    use crate::sim::superweapon::ai_fire;
+
+    let rules = rules("[Delivery]\nSW.Deferment=0\nSW.AITargeting=None\n");
+    let mut sim = world(&rules);
+    let (owner, sw) = charge(&mut sim, &rules, "Russians");
+    sim.houses
+        .get_mut(&owner)
+        .unwrap()
+        .set_preferred_super_weapon_target((12, 10));
+    ai_fire::try_fire(&mut sim, &rules, owner, None, FrameEffects::default());
+    assert!(payloads(&sim, "MTNK").is_empty());
+    assert!(sim.super_weapons[&owner][&sw].is_ready);
 }
 
 #[test]

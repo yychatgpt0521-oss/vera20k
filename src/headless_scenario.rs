@@ -280,6 +280,11 @@ fn load_with_assets(
         cold_rules_owner = owner;
         &mut cold_rules_owner
     };
+    // ThemeClass::ReadINI720590 is process data even without an output device.
+    // Keep the existing headless archive stack: THEMEMD.MIX and the preserved
+    // RA2 THEME.MIX extension were mounted at startup; this route has no shell
+    // neutral-archive activation. Resolve before scenario Rules/theater changes.
+    let themes = crate::rules::theme_ini::ThemeCatalog::select(&assets);
     let scenario_prefix_plan =
         crate::sim::scenario_bootstrap::prepare_stock_offline_scenario_prefix_plan(
             &launch,
@@ -292,6 +297,9 @@ fn load_with_assets(
         &assets,
         Some(&launch.session().mode.override_file),
     )?;
+    // This headless entry has no MainMenuTypedCodes owner or THETEAM input.
+    // It shares the process Rules owner (including LANGRULE Digest reads), but
+    // cannot admit Full_Init's mode-5 TMCJ4F route.
     let (mut rules, _, art_ini, native_rules_receipt) = native_rules_owner
         .load_scenario(
             crate::rules::process_owner::NativeScenarioRulesPrefix::NonCampaign(
@@ -382,6 +390,7 @@ fn load_with_assets(
         &team_ai_registry,
         Some(audio_definitions.eva()),
         Some(audio_definitions.sounds().as_ref()),
+        Some(&themes),
     );
     let (mut scenario_fill_rng, variant_main_rng) = sim.terrain_load_draws();
     let mut scenario_fill_ranged =
@@ -1626,13 +1635,19 @@ mod retail_construction_tests {
             .collect()
     }
 
-    /// Two retail Yuri TeamTypes whose members are spawned beside the Yuri
-    /// house's base once the bases stand: "Yuri Infantry - M1" (`05FFB46C-G`,
-    /// script `0,4 / 49 / 0,1`) and "Yuri Engineers" (`08B95EFC-G`,
-    /// `54 / 0,6 / 49 / 0,9 / 0,2`). Action 0's scan finds the first team
-    /// another house's infantry, which its members attack. For the second it
-    /// prints whether an engineer aimed at another house's building: in the
-    /// first run that team disbanded before frame 1000, not yet explained.
+    /// Two retail Yuri TeamTypes whose members are spawned on the free cells
+    /// nearest the Yuri house's base centre once the bases stand: "Yuri
+    /// Infantry - M1" (`05FFB46C-G`, five Initiates and an engineer, script
+    /// `0,4 / 49 / 0,1`) and "Yuri Engineers" (`08B95EFC-G`,
+    /// `54 / 0,6 / 49 / 0,9 / 0,2`). The first team may recruit the house's
+    /// own Initiates; its leader's action 0 scan finds another house's
+    /// infantry, which an Initiate of the team attacks. For the second it
+    /// prints whether an engineer aimed at another house's building.
+    ///
+    /// The cells 15 north of that base lie in no zone (0xFFFF), and
+    /// `Evaluate_Candidate`'s zone test (`0x006F7E7E..0x006F7E9C`) rejects
+    /// every quarry of a leader standing there: action 0 finds nothing, the
+    /// script runs out and the team is gone.
     #[test]
     #[ignore = "requires RA2_DIR with installed retail RA2/YR assets"]
     fn retail_yuri_teams_attack() {
@@ -1644,10 +1659,15 @@ mod retail_construction_tests {
         }
         let runtime = &mut scenario.runtime;
         let (sim, resources) = (&mut runtime.simulation, &runtime.resources);
-        let (yuri, spawned) = spawn_beside_base(
+        let yuri = house_of(sim, "YuriCountry");
+        let (bx, by) = sim.houses[&yuri]
+            .base_center()
+            .expect("the base has a centre");
+        let spawned = spawn_on_free_cells(
             sim,
             &resources.rules,
-            "YuriCountry",
+            yuri,
+            cells_nearest((i32::from(bx), i32::from(by))),
             &[
                 "INIT",
                 "INIT",
@@ -1705,9 +1725,11 @@ mod retail_construction_tests {
         for frame in 1..=3_000u32 {
             scenario.tick();
             let sim = scenario.sim();
-            infantry_attacked |= spawned.iter().any(|&id| {
-                sim.entities().get(id).is_some_and(|entity| {
-                    entity.type_ref() == initiate && aims_at_another_house(sim, entity)
+            infantry_attacked |= sim.team_script_vm.team(teams[0]).is_some_and(|team| {
+                team.members().any(|id| {
+                    sim.entities().get(id).is_some_and(|entity| {
+                        entity.type_ref() == initiate && aims_at_another_house(sim, entity)
+                    })
                 })
             });
             engineer_attacked |= spawned.iter().any(|&id| {
@@ -1777,8 +1799,11 @@ mod retail_construction_tests {
     /// 14 and 43); it carries them to the yard (47) and unloads them, and
     /// they rejoin the team (8). Five riders fill the Night Hawk, so action
     /// 14 finishes on its no-transport arm without archiving a cell (only a
-    /// transport with a seat left reaches `Set_ArchiveTarget @ 0x0070C610`),
-    /// and the unload sends it out of the team with no destination.
+    /// transport with a seat left reaches `Set_ArchiveTarget @ 0x0070C610`).
+    /// It keeps the post its Area Guard archived before the team stepped
+    /// (`TeamClass::AI @ 0x006E9140` spares a `TransportsReturnOnUnload=`
+    /// transport's archive), and the unload sends it out of the team to that
+    /// post.
     #[test]
     #[ignore = "requires RA2_DIR with installed retail RA2/YR assets"]
     fn retail_transport_teams_load_and_unload() {
@@ -1873,10 +1898,21 @@ mod retail_construction_tests {
                 })
                 .expect("a team of the TeamType");
             let (transport, infantry) = (spawned[0], &spawned[1..]);
+            // The transport's cell, which a computer's Foot on Area Guard
+            // archives as its post (`FootClass::Mission_AreaGuard`,
+            // `0x004D6D78..0x004D6DB9`) before the team steps.
+            let post = sim
+                .entities()
+                .get(transport)
+                .map(|entity| (entity.position.rx(), entity.position.ry()))
+                .expect("the transport stands");
             // The first frame all the infantry were aboard the transport and
             // its archive then, the first frame after that they were all
-            // members again, and the first frame the transport was not, with
-            // its NavCom then.
+            // members again, and the first frame the team stood without the
+            // transport, with its NavCom then. A team whose engineers took the
+            // only building ends instead: action 46 (`0x006EE310`) finds no
+            // target and completes, and `TeamClass::AI` destroys a team run
+            // past its script's end (`0x006E9140`, to `0x006E9713`).
             let (mut loaded, mut archive, mut unloaded) = (None, None, None);
             let mut transport_left = None;
             let mut present = (true, vec![true; spawned.len()]);
@@ -1954,8 +1990,7 @@ mod retail_construction_tests {
                 }
                 if let Some(done) = unloaded {
                     if transport_left.is_none()
-                        && !team
-                            .is_some_and(|team| team.members().any(|member| member == transport))
+                        && team.is_some_and(|team| team.members().all(|member| member != transport))
                     {
                         transport_left = Some((
                             frame,
@@ -1980,11 +2015,19 @@ mod retail_construction_tests {
                 "{team_type}: the infantry never rejoined"
             );
             if team_type == "0AD4D7BC-G" {
-                assert_eq!(archive, None, "the full Night Hawk archived a cell");
+                let (x, y) = post;
+                assert_eq!(
+                    archive,
+                    Some(crate::sim::combat::TargetKind::Cell(x, y)),
+                    "the full Night Hawk archived a cell over its post"
+                );
                 assert_eq!(
                     transport_left.map(|(_, nav_com)| nav_com),
-                    Some(None),
-                    "the Night Hawk left its team with no destination"
+                    Some(Some(crate::sim::components::NavTargetRef::Cell {
+                        rx: x,
+                        ry: y
+                    })),
+                    "the Night Hawk left its team for its post"
                 );
             } else {
                 assert_eq!(transport_left, None, "the HTK left its team");
@@ -3052,9 +3095,13 @@ mod retail_construction_tests {
     /// "Allied Spy vs Soviet Power" (`09B5091C-G`: one SPY, the script
     /// `0,4 / 47,131081 / 46,9 / 47,131083 / 46,11`) for a Normal American
     /// house against the idle local Soviet house, which is given a Tesla
-    /// Reactor beside its MCV, guarded by a Sentry Gun and a Conscript. The
+    /// Reactor beside its MCV, guarded by a Sentry Gun and a Conscript, once
+    /// the American house has deployed its MCV: that yard's deploy sends
+    /// every ground Techno of the house, a team's included, to the new base
+    /// (`HouseClass::MoveGroundForcesToBase @ 0x0050C920`, from
+    /// `UnitClass::Deploy` at `0x00739926`), and would call the spy home. The
     /// team's spy is spawned twelve cells from the reactor, towards its own
-    /// house's MCV. Action 0 (attack infantry) takes the flat walk over every
+    /// house's yard. Action 0 (attack infantry) takes the flat walk over every
     /// object (`0x006F8FE0`) and finds the Conscript, which the `MakeupKit`
     /// (`Range=-2`) reaches from anywhere: its `MakesDisguise=` shot dresses
     /// the spy as a Soviet Conscript, and the `FireOnce=` shot ends the
@@ -3078,10 +3125,20 @@ mod retail_construction_tests {
             },
             &[(LaunchCountry::America, AiDifficulty::Normal)],
         );
+        let america = house_of(scenario.sim(), "Americans");
+        let is_american_yard = |entity: &crate::sim::game_entity::GameEntity| {
+            entity.owner() == america
+                && entity.category() == crate::map::entities::EntityCategory::Structure
+        };
+        for _ in 0..300 {
+            scenario.tick();
+            if scenario.sim().entities().values().any(is_american_yard) {
+                break;
+            }
+        }
         let runtime = &mut scenario.runtime;
         let (sim, rules) = (&mut runtime.simulation, &runtime.resources.rules);
         let soviet = house_of(sim, "Russians");
-        let america = house_of(sim, "Americans");
         let at = |sim: &Simulation, id| {
             let entity = sim.entities().get(id).expect("spawned");
             (
@@ -3112,18 +3169,18 @@ mod retail_construction_tests {
             cells_nearest((rx, ry)),
             &["NALASR", "E2"],
         );
-        // Twelve cells out towards the American MCV. The nearest cells the
+        // Twelve cells out towards the American yard. The nearest cells the
         // other way lie in no zone (0xFFFF), and Evaluate_Candidate's zone
         // test, which only DWORD -1 skips (`0x006F7E36`), then rejects every
         // quarry of a spy standing there.
-        let american_mcv = sim
+        let american_yard = sim
             .substrate
             .entities
             .iter_sorted()
-            .find(|(_, entity)| entity.owner() == america)
+            .find(|(_, entity)| is_american_yard(entity))
             .map(|(id, _)| id)
-            .expect("the American MCV");
-        let (ax, ay) = at(sim, american_mcv);
+            .expect("the American Construction Yard");
+        let (ax, ay) = at(sim, american_yard);
         let reach = (ax - rx).abs().max((ay - ry).abs()).max(1);
         let toward = (rx + (ax - rx) * 12 / reach, ry + (ay - ry) * 12 / reach);
         let cells = cells_nearest(toward)

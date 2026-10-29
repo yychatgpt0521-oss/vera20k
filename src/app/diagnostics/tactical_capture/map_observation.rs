@@ -1538,9 +1538,10 @@ impl MapSidebarObservation {
                 rect: rect(view.scroll_down_button.rect),
                 disabled: view.scroll_down_button.disabled,
             },
+            // Native never disables Repair/Sell; the receipt keeps the field.
             mode_buttons: [&view.repair_button, &view.sell_button].map(|button| MapSidebarToggle {
                 rect: rect(button.rect),
-                disabled: button.disabled,
+                disabled: false,
                 active: button.active,
             }),
         })
@@ -4529,7 +4530,6 @@ impl TacticalCaptureSession {
             "instance_counts": super::super::evidence::RenderInstanceCountEvidence::from_counts(output.instance_counts)?,
             "internal_extent": [state.render_width(), state.render_height()],
             "surface_extent": [state.renderer.gpu.config.width, state.renderer.gpu.config.height],
-            "ui_scale": state.match_state.match_presentation.ui_scale,
             "gpu": super::super::evidence::GpuAdapterEvidence::from_observation(state.renderer.gpu.capture_adapter_observation()),
             "unit_atlas": unit_atlas,
             "frame_wall_mean_ms": frame_wall_mean_ms,
@@ -5609,7 +5609,7 @@ mod tests {
     #[test]
     fn gestures_require_sealed_neutral_cursor_and_strict_tactical_pixel_arguments() {
         let mut profile = example();
-        profile.schema_version = PROFILE_V2.to_owned();
+        profile.cursor_position = None;
         profile.gestures = Some(Vec::new());
         assert!(profile.validate().is_err());
         profile.cursor_position = Some([720, 556]);

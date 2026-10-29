@@ -189,6 +189,9 @@ impl<'a> FrameClientBoundary<'a> {
                 &mut elapsed,
                 sfx,
                 *other_local_pause,
+                // The admitted frame completes before a relay pause takes
+                // effect, so its native/audio pause reasons still coincide.
+                *other_local_pause,
                 wall_ms,
             ),
             _ => unreachable!(),
@@ -437,7 +440,7 @@ mod tactical_radar_tests {
         )
         .unwrap();
         sim.install_waypoints(&map.waypoints);
-        sim.initialize_trigger_definitions(&map, &Default::default(), None, None);
+        sim.initialize_trigger_definitions(&map, &Default::default(), None, None, None);
         sim.classify_map_triggers(&rules);
         sim.advance_triggers(&rules, None, FrameEffects::empty());
         assert!(matches!(

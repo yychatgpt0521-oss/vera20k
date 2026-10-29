@@ -1563,6 +1563,10 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         b"production-start-price".hash(hasher);
         entity.production_start_price().hash(hasher);
     }
+    if entity.is_useless() {
+        // Native Techno+3D0 affects a later Repair-depot sale (`0x0044C4BC`).
+        b"techno-useless-v1".hash(hasher);
+    }
     // Shared count presence and the raw Techno reload clock affect future
     // firing/reload, including a signed -1 reached from InitialAmmo=-2.
     b"techno-ammo-reload-v1".hash(hasher);
@@ -1807,6 +1811,10 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     if !entity.unit_delivery_provides_base_space() {
         b"unit-delivery-no-base-v1".hash(hasher);
     }
+    if let Some(origin) = entity.hunter_seeker_origin() {
+        b"hunter-seeker-source-v1".hash(hasher);
+        origin.hash(hasher);
+    }
     // Building+662 and Techno+1C8 (`sim::powered_unit`), folded only
     // while set.
     if entity.building_powered_center.is_counted() {
@@ -1875,7 +1883,12 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     // The flash countdown (+F0) is not folded: TechnoClass::Flash's gate and
     // the MegaMission event's flash read the current player, so lockstep
     // peers hold different values, and no gameplay decision reads it.
-    entity.crate_multipliers.armor().bits().hash(hasher);
+    entity.crate_multipliers.crate_armor().bits().hash(hasher);
+    #[cfg(feature = "ares")]
+    if entity.crate_multipliers.armor() != entity.crate_multipliers.crate_armor() {
+        b"attached-armor-v1".hash(hasher);
+        entity.crate_multipliers.armor().bits().hash(hasher);
+    }
     // Folded only once a Firepower crate changed it, so the legacy
     // hash stream of every untouched object is preserved.
     if entity.crate_multipliers.crate_firepower() != crate::util::native_x87::NativeF64Bits::ONE {
@@ -2033,6 +2046,9 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     entity.building_light.spotlight_capable().hash(hasher);
     entity.building_light.light().hash(hasher);
     entity.low_bridge_tube_state.hash(hasher);
+    entity.stealth_ability.granted().hash(hasher);
+    #[cfg(feature = "ares")]
+    entity.stealth_ability.attached().hash(hasher);
     if let Some(cloak) = entity.cloak.as_ref() {
         1u8.hash(hasher);
         cloak.state().hash(hasher);
@@ -2043,20 +2059,6 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         cloak.step_timer().timer().duration().hash(hasher);
         cloak.recloak_delay().start_frame().hash(hasher);
         cloak.recloak_delay().duration().hash(hasher);
-    } else {
-        0u8.hash(hasher);
-    }
-    if let Some(deposit) = entity.sensor_deposit {
-        1u8.hash(hasher);
-        deposit.owner().hash(hasher);
-        deposit.center().hash(hasher);
-        deposit.add_radius().hash(hasher);
-        deposit.remove_radius().hash(hasher);
-        deposit.building_array().hash(hasher);
-        // The cached `DetectDisguiseRange=` circle. It is the
-        // radius Limbo will decrement, so it selects which
-        // cells leave the disguise-detect plane.
-        deposit.detect_disguise_radius().hash(hasher);
     } else {
         0u8.hash(hasher);
     }
@@ -2393,6 +2395,10 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
             target.hash(hasher);
         }
         None => 0u8.hash(hasher),
+    }
+    if let Some(anim) = entity.parachute_animation() {
+        b"parachute-animation-v1".hash(hasher);
+        anim.hash(hasher);
     }
     // Preserve the idle hash while retaining every nonzero fall word.
     // Landing retains the rate/+84/+8F for a later DropAsBomb.

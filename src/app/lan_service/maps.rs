@@ -10,7 +10,7 @@
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::time::{Duration, Instant};
+use crate::util::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, ensure};
 
@@ -928,6 +928,15 @@ pub(super) fn received_options(
 }
 
 pub(super) fn poll(state: &mut AppState) {
+    // A direct spawn's map is the launcher's file; nothing is transferred.
+    if state
+        .match_state
+        .lan_service
+        .as_ref()
+        .is_some_and(|service| service.preadmitted)
+    {
+        return;
+    }
     let scope = state
         .match_state
         .lan_service

@@ -114,7 +114,8 @@ pub struct MinimapRenderer {
     /// shroud/fog cell and packed terrain color.
     surface_pixels: Vec<RadarSurfacePixel>,
     /// Per-cell overlay metadata. Authoritative radar surfaces bake these into
-    /// raw RGB before sampling; only the mapless fallback stamps them later.
+    /// raw RGB before sampling; only the mapless fallback stamps them later and
+    /// updates them for dirty cells.
     overlay_pixels: Vec<OverlayPixel>,
     /// Legacy mapless aspect-fit sub-region within the native aperture.
     pub(super) map_offset_x: f32,
@@ -773,7 +774,7 @@ impl MinimapRenderer {
     }
 
     /// Spacebar review of the eight most recent accepted event cells.
-    pub(crate) fn cycle_radar_event(&mut self, now: std::time::Instant) -> Option<(u16, u16)> {
+    pub(crate) fn cycle_radar_event(&mut self, now: crate::util::time::Instant) -> Option<(u16, u16)> {
         self.radar_events.cycle_cell(now)
     }
 

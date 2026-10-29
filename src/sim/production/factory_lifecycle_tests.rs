@@ -913,7 +913,11 @@ fn offline_backup_recovery_distinguishes_saved_system_and_user_holds() {
 /// UpdateFactoryQueue509140 or House1FC request; native loss cleanup starts
 /// in the completing Limbo445E14. Protect the first subsequent Factory sweep
 /// before any crew/reverse-buildup work could trigger another mechanism.
+/// Stock only: Phobos TechnoClass_Init (hook `0x6F42F7`) sets House1FC for the
+/// stage-1 crew, and that recheck's strip pass abandons the head because
+/// Find_Factory skips a selling factory (`0x5F797A`/`0x5F7983`).
 #[test]
+#[cfg(not(feature = "phobos"))]
 fn selling_last_retail_barracks_keeps_paid_head_before_map_exit() {
     use crate::sim::command::{Command, CommandEnvelope};
     use crate::sim::mission::MissionType;
@@ -1837,7 +1841,12 @@ fn prerequisite_loss_events_preserve_player_copies_cleanup_and_snapshot_replay()
     );
     assert_eq!(output.tick.executed_commands, 3);
     assert_gone(&live.simulation, parent, &child_ids);
-    assert!(!live.simulation.houses[&owner].tech_recheck_pending());
+    // Phobos TechnoClass_Init (hook 0x6F42F7) sets House1FC again as the
+    // abandons construct the next queued heads and their slaves.
+    assert_eq!(
+        live.simulation.houses[&owner].tech_recheck_pending(),
+        crate::rules::PHOBOS_ENABLED
+    );
     let head = held_id(&live.simulation, owner, ProductionCategory::Vehicle);
     assert_eq!(
         live.simulation.interner.resolve(
@@ -2726,6 +2735,77 @@ fn building_queue_switch_keeps_a_suspended_held_building() {
         .unwrap();
     assert_eq!(factory.queue.len(), 1);
     assert_eq!(sim.interner.resolve(factory.queue[0].type_id), "YAREFN");
+}
+
+/// The same cancel through the production entry: Phobos'
+/// `HouseClass_AbandonProduction_RewriteForBuilding @ 0x004FAAD8` makes one
+/// right-click on a queued structure remove that queued copy, so the building
+/// under construction stays and nothing refunds (a queued copy is unpaid until
+/// it starts). Without the rewrite this call abandons the held product instead.
+#[cfg(feature = "phobos")]
+#[test]
+fn cancel_one_queued_structure_keeps_the_building_under_construction() {
+    use crate::sim::production::ProductionCancellation;
+    use crate::sim::world::FrameEffects;
+
+    let (mut sim, rules, owner) = world_with_building_queue(0xb001_0003);
+    assert!(enqueue_by_type(
+        &mut sim,
+        &rules,
+        "Americans",
+        "GAPOWR",
+        FrameEffects::default(),
+        false,
+    ));
+    let held = held_id(&sim, owner, ProductionCategory::Building);
+    assert!(enqueue_by_type(
+        &mut sim,
+        &rules,
+        "Americans",
+        "GAPOWR",
+        FrameEffects::default(),
+        false,
+    ));
+    let credits = sim.houses[&owner].economy().credits();
+    assert_eq!(
+        sim.production
+            .factories()
+            .view(owner, ProductionCategory::Building)
+            .unwrap()
+            .queue
+            .len(),
+        1,
+        "the second GAPOWR waits in the queue"
+    );
+
+    assert!(cancel_production_for_owner(
+        &mut sim,
+        &rules,
+        "Americans",
+        ProductionCancellation::Type {
+            type_id: "GAPOWR",
+            naval: false,
+        },
+        false,
+        FrameEffects::default(),
+    ));
+
+    let factory = sim
+        .production
+        .factories()
+        .view(owner, ProductionCategory::Building)
+        .unwrap();
+    assert!(factory.queue.is_empty(), "the queued copy is gone");
+    assert_eq!(
+        held_id(&sim, owner, ProductionCategory::Building),
+        held,
+        "the building under construction is retained"
+    );
+    assert_eq!(
+        sim.houses[&owner].economy().credits(),
+        credits,
+        "an unpaid queued copy refunds nothing"
+    );
 }
 
 /// Begin_Production drops a building's PRODUCE while the building factory

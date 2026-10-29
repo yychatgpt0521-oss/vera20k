@@ -7,6 +7,16 @@ use crate::skirmish_launch::{
     SkirmishLaunchMode, SkirmishLaunchOptions, SkirmishLocalSlot,
 };
 
+#[test]
+fn browser_peer_wait_starts_after_the_terminal_ack_drain() {
+    let mut wait = NetworkLoadWait::new(100, 0.5);
+    wait.start_pending = true;
+    assert_eq!(wait.poll(340, 0.75), NetworkLoadPoll::Pending);
+    assert_eq!(wait.poll(639, 0.75), NetworkLoadPoll::Pending);
+    assert_eq!(wait.poll(640, 0.75), NetworkLoadPoll::ReportProgress);
+    assert_eq!(wait.poll(3940, 0.75), NetworkLoadPoll::TimedOut);
+}
+
 pub(super) fn test_launch_session(country: LaunchCountry) -> SkirmishLaunchSession {
     SkirmishLaunchSession {
         mode: SkirmishLaunchMode {
@@ -64,6 +74,38 @@ fn recorded_network_mode_stays_in_shell_until_the_world_is_installed() {
         game_mode: SessionMode::Wol,
         native_id_prefix: 0,
     };
+    assert!(!crate::app::loading::init::should_read_tmcj4f(
+        startup.session_mode(),
+        true,
+    ));
+    let replay_with_mode = |game_mode| match &startup {
+        LoadingStartup::Replay {
+            session,
+            seed,
+            native_id_prefix,
+            ..
+        } => LoadingStartup::Replay {
+            session: session.clone(),
+            seed: *seed,
+            game_mode,
+            native_id_prefix: *native_id_prefix,
+        },
+        _ => unreachable!("test startup is a Replay"),
+    };
+    let lan_replay = replay_with_mode(SessionMode::Lan);
+    assert!(!crate::app::loading::init::should_read_tmcj4f(
+        lan_replay.session_mode(),
+        true,
+    ));
+    let skirmish_replay = replay_with_mode(SessionMode::Skirmish);
+    assert!(crate::app::loading::init::should_read_tmcj4f(
+        skirmish_replay.session_mode(),
+        true,
+    ));
+    assert!(!crate::app::loading::init::should_read_tmcj4f(
+        skirmish_replay.session_mode(),
+        false,
+    ));
     let mut session = MatchSession::default();
     prepare_session_for_loading(&mut session, &startup);
     assert_eq!(session.shell_mode(), Some(SessionMode::Wol));
@@ -519,6 +561,25 @@ fn begin_loading_plays_loading_theme_and_polls_theme_through_the_lease() {
 }
 
 #[test]
+fn presentation_wait_retirement_returns_the_process_asset_lease() {
+    let mut assets = crate::app::process_assets::ProcessAssets::new(
+        crate::assets::asset_manager::MediaArchiveMode::STOCK_DIGITAL,
+        false,
+    );
+    assets.return_from_loading(AssetManager::from_loose_root_for_test(&std::env::temp_dir()));
+    let mut session = LoadingSession::from_request(LoadingRequest::generic_map_load("pending"));
+    let mut result = super::super::transitions::fallback_map_load_result();
+    result.asset_manager = assets.lease_for_loading();
+    session.stage = LoadingStage::PreparingPresentation {
+        result: Box::new(result),
+    };
+    assert!(assets.is_leased() && !assets.is_available());
+    assert!(loading_asset_manager(&session).is_some());
+    session.retire(&mut assets);
+    assert!(assets.is_available() && !assets.is_leased());
+}
+
+#[test]
 fn loading_replacement_and_terminal_retirement_preserve_cache_and_admission_order() {
     let dir = std::env::temp_dir().join(format!("vera20k-loading-owner-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -813,6 +874,30 @@ fn loading_preparation_consumes_real_source_and_returns_lease_on_initial_and_adm
                 .bytes
         ));
     }
+}
+
+#[cfg(feature = "ares")]
+#[test]
+fn loading_rows_draw_their_own_country_insignia_file() {
+    let rules =
+        crate::rules::ruleset::RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
+            "[Countries]\n0=Americans\n1=Custom\n[Custom]\nFile.Flag=MyFlag.PCX\n",
+        ))
+        .expect("insignia country rules parse");
+    assert_eq!(
+        super::loading_row_insignia(Some(&rules), None, 1).as_deref(),
+        Some("myflag.pcx")
+    );
+    assert_eq!(
+        super::loading_row_insignia(Some(&rules), Some(LoadingArtVariant::Americans), 0).as_deref(),
+        Some("usai.pcx")
+    );
+    // An observer row carries no Country selection, so the stock `-3` chain
+    // (obsi.pcx) still decides.
+    assert_eq!(
+        super::loading_row_insignia(Some(&rules), Some(LoadingArtVariant::Observer), 0),
+        None
+    );
 }
 
 #[test]
@@ -1856,9 +1941,10 @@ fn selected_native_gate_preserves_metadata_and_raw_progress_cadence() {
             Some(LoadingArtVariant::Americans),
             0,
             HouseColorIndex(0),
-            LoadingProgressRowSnapshot::from_launch_session(&test_launch_session(
-                LaunchCountry::America,
-            )),
+            LoadingProgressRowSnapshot::from_launch_session(
+                &test_launch_session(LaunchCountry::America),
+                crate::rules::skirmish_colors::SkirmishColorMode::VANILLA,
+            ),
             cadence,
         );
         native.runtime_color_scheme_count = 16;
@@ -1902,9 +1988,10 @@ fn native_loading_state_keeps_the_full_player_progress_ramp() {
         Some(LoadingArtVariant::Americans),
         0,
         HouseColorIndex(1),
-        LoadingProgressRowSnapshot::from_launch_session(&test_launch_session(
-            LaunchCountry::America,
-        )),
+        LoadingProgressRowSnapshot::from_launch_session(
+            &test_launch_session(LaunchCountry::America),
+            crate::rules::skirmish_colors::SkirmishColorMode::VANILLA,
+        ),
         NativeLoadingProgressCadence::SelectedMap,
     );
     native.resolve_player_colors(
@@ -2042,7 +2129,10 @@ fn native_loading_percentage_controls_and_completion_match_original() {
                 human
             })
             .collect();
-        let mut rows = LoadingProgressRowSnapshot::from_launch_session(&launch);
+        let mut rows = LoadingProgressRowSnapshot::from_launch_session(
+            &launch,
+            crate::rules::skirmish_colors::SkirmishColorMode::VANILLA,
+        );
         let mut local = LoadingProgressState::standard_skirmish();
         for update in row["updates"].as_array().unwrap() {
             let index = update[0].as_u64().unwrap() as usize;
@@ -2205,7 +2295,10 @@ fn held_network_sink_sends_rmg_display_progress_and_services_the_same_source_row
             Some(LoadingArtVariant::Americans),
             0,
             HouseColorIndex(0),
-            LoadingProgressRowSnapshot::from_launch_session(session.network_setup().unwrap()),
+            LoadingProgressRowSnapshot::from_launch_session(
+                session.network_setup().unwrap(),
+                crate::rules::skirmish_colors::SkirmishColorMode::VANILLA,
+            ),
             NativeLoadingProgressCadence::RandomMapHalved,
         )
     };

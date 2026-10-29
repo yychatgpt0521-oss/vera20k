@@ -13,7 +13,7 @@
 //! wave is live. The slide-in start cue is `GUIMoveInSound` (stock `MenuSlideIn`);
 //! the end cue `ShellButtonSlideSound` is empty in stock rules.
 
-use std::time::{Duration, Instant};
+use crate::util::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 
@@ -794,6 +794,13 @@ pub(crate) fn blocks_shell_input(state: &AppState) -> bool {
     state.frontend.quit_cascade.is_some()
         || state.frontend.shell_exit.is_some()
         || transition_blocks_shell_input(state.frontend.shell_first_paint_slide.as_ref())
+        // An external network launch shows the menu backdrop only while it
+        // joins or reports its match (docs/spawn.md).
+        || (state.frontend.screen == crate::ui::game_screen::GameScreen::MainMenu
+            && (crate::app::shell_wol::spawned_visit(state)
+                || crate::app::shell_network_setup::external(state)))
+        // A browser external launch that ended waits for the next one.
+        || state.frontend.external_idle
 }
 
 pub(crate) fn transition_blocks_shell_input(transition: Option<&ShellFrameWave>) -> bool {

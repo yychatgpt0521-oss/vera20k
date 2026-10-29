@@ -33,7 +33,6 @@ pub(crate) struct OwnerChangeAuthority(());
 
 /// Only this module can write an entity's type, so the per-type counts
 /// ([`EntityStore::count_of_type`]) change with it.
-#[cfg(feature = "ares")]
 pub(crate) struct TypeChangeAuthority(());
 
 /// Only this module can write an entity's AircraftTracker membership, so the
@@ -593,7 +592,6 @@ impl EntityStore {
 
     /// Ares type conversion's live type write, keeping the per-type counts.
     /// No-op if the entity is absent or already has `new_type`.
-    #[cfg(feature = "ares")]
     pub(crate) fn change_type(&mut self, stable_id: u64, new_type: InternedId) {
         self.touched.note(stable_id, self.len());
         let Some(&slot) = self.slot_of.get(&stable_id) else {

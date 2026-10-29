@@ -47,6 +47,7 @@ pub(crate) fn sync_in_game_options_speed_from_sim(state: &mut AppState) {
 
 pub(crate) fn fallback_map_load_result() -> init::MapLoadResult {
     init::MapLoadResult {
+        pending_atlases: None,
         scenario: init::ScenarioLoadInputs {
             campaign_names: None,
             startup: crate::app::match_bootstrap::LoadingStartup::Generic {
@@ -69,7 +70,6 @@ pub(crate) fn fallback_map_load_result() -> init::MapLoadResult {
             map_lighting_config: crate::map::lighting::LightingConfig::default(),
             theater_name: "TEMPERATE".to_string(),
             theater_ext: "tem".to_string(),
-            initial_local_owner: None,
             sandbox_full_visibility: false,
             opening_view_cell: None,
             camera_anchor_x: 0.0,
@@ -85,6 +85,13 @@ pub(crate) fn fallback_map_load_result() -> init::MapLoadResult {
             bridge_atlas: None,
             sidebar_cameo_atlas: None,
             sidebar_chrome: None,
+            #[cfg(feature = "phobos")]
+            sw_sidebar_ui: crate::rules::phobos_sw_sidebar::SuperWeaponSidebarUi::default(),
+            #[cfg(feature = "phobos")]
+            center_pause_menu_background: false,
+            #[cfg(feature = "phobos")]
+            sw_sidebar_art: None,
+            outcome_banner_side_art: None,
             software_cursor: None,
             overlay_names: BTreeMap::new(),
             overlay_radar_colors: HashMap::new(),
@@ -143,6 +150,8 @@ pub(crate) fn install_world_presentation(
     state.match_state.match_presentation.combat_lights.clear();
     state.match_state.match_presentation.interpolation.clear();
     state.match_state.match_presentation.lasers.clear_on_load();
+    #[cfg(feature = "ares")]
+    state.match_state.match_presentation.flying_credits.borrow_mut().clear_on_load();
     state
         .match_state
         .match_presentation
@@ -195,6 +204,40 @@ pub(crate) fn install_world_presentation(
     state.match_state.match_presentation.bridge_atlas = assets.bridge_atlas;
     state.match_state.match_presentation.sidebar_cameo_atlas = assets.sidebar_cameo_atlas;
     state.match_state.match_presentation.sidebar_chrome = assets.sidebar_chrome;
+    #[cfg(feature = "phobos")]
+    {
+        state.match_state.match_presentation.center_pause_menu_background =
+            assets.center_pause_menu_background;
+        state.match_state.match_presentation.sw_sidebar_art = assets.sw_sidebar_art;
+        let significance = state
+            .match_state
+            .match_presentation
+            .sw_sidebar
+            .required_significance;
+        state
+            .match_state
+            .match_presentation
+            .sw_sidebar
+            .configure(assets.sw_sidebar_ui, significance);
+    }
+    state.match_state.match_presentation.outcome_banner_side_art = assets.outcome_banner_side_art;
+    // `Game_LoadUI_LoadSideData` resolves the dialog background pair once per
+    // game load. The shell chrome atlas carries the three side slots, so a
+    // changed pair drops it and the next paint rebuilds with the side's art;
+    // the process-lifetime slot 0 (`PUDLGBGN`) is not part of the hook.
+    #[cfg(feature = "ares")]
+    {
+        let side = state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map_or(-1, |runtime| runtime.simulation.session().scenario_side());
+        let pair = state.process_assets.side_dialog_background(side);
+        if state.frontend.shell_dialog_background != pair {
+            state.frontend.shell_dialog_background = pair;
+            state.frontend.skirmish_shell_chrome = None;
+        }
+    }
     // GAME.FNT is process artwork, so retain the established process fallback
     // when optional font preparation did not produce a replacement.
     if let Some(ref fnt) = assets.fnt_file {
@@ -396,6 +439,10 @@ pub(crate) fn install_world_presentation(
 /// owner suspends/resumes audio; the later Theme queue/Stop(true) belongs to
 /// apply_map_load_result (683E4D..683E66), after this movie returns.
 pub(crate) fn finish_fresh_scenario_read(state: &mut AppState, mut result: init::MapLoadResult) {
+    assert!(
+        result.pending_atlases.is_none(),
+        "install requires completed presentation"
+    );
     // Read_INI_Basic689FD6/689FF4 retains these two buffers across fresh
     // ClearScene reads. Saved restoration instead installs the saved values
     // directly through install_world_presentation; it must not inherit here.
@@ -600,9 +647,8 @@ pub(crate) fn apply_map_load_result(state: &mut AppState, result: init::MapLoadR
     state.match_state.input.keys_held.clear();
     state.match_state.input.cursor_x = tactical_width as f32 * 0.5;
     state.match_state.input.cursor_y = tactical_height as f32 * 0.5;
-    state.platform.frame_pacer.reset_for_immediate_frame();
+    state.platform.frame_pacer.reset_for_new_world();
     state.match_state.input.queued_order_mode = render::OrderMode::Move;
-    state.match_state.local_owner_override = result.scenario.initial_local_owner;
     state.match_state.match_audio.reset_for_new_match();
     state.match_state.sandbox_full_visibility = result.scenario.sandbox_full_visibility;
 

@@ -27,6 +27,11 @@ mod test_service;
 pub(crate) mod translation;
 
 pub(crate) use live_service::OnlineCleanup;
+#[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+pub(crate) use live_service::discard_spawned_visit;
+pub(crate) use live_service::{
+    DecodedRelayGrant, begin_spawned_match, decode_external_relay_grant, end_spawned_match,
+};
 pub(crate) use live_service::{
     local_choices_agreed, online_cleanup_pending, online_exit_ready, online_match_id,
 };
@@ -43,7 +48,7 @@ pub(crate) use test_service::{
 
 /// The wait box's reveal timer and the login drop list's scroll repeats;
 /// the caller schedules the earliest deadline with the other shell timers.
-pub(crate) fn poll(state: &mut AppState) -> Option<std::time::Instant> {
+pub(crate) fn poll(state: &mut AppState) -> Option<crate::util::time::Instant> {
     [
         service::poll_wait(state),
         login::poll_scroll_repeat(state),
@@ -246,6 +251,9 @@ pub(crate) struct WolVisit {
     page_received: Option<Box<crate::ui::wol_page::WolPageReceived>>,
     /// The Quick Match runner's globals; the opponent outlives the runner.
     quick_match: quick_match::QuickMatchGlobals,
+    /// An external launch's relay match (docs/spawn.md) instead of a visit
+    /// the Internet button opened.
+    spawned: Option<live_service::SpawnedVisit>,
 }
 
 impl WolVisit {
@@ -286,6 +294,7 @@ impl WolVisit {
             page_dialog: None,
             page_received: None,
             quick_match: Default::default(),
+            spawned: None,
         }
     }
 
@@ -394,6 +403,16 @@ pub(crate) fn chat_sent(state: &mut AppState, line: &crate::ui::wol_chat::WolCha
     {
         visit.locate_name = Some(String::from_utf16_lossy(name));
     }
+}
+
+/// The online visit is an external launch's relay match: its shell takes no
+/// input, and its end reports the result instead of re-entering the lobby.
+pub(crate) fn spawned_visit(state: &AppState) -> bool {
+    state
+        .frontend
+        .wol
+        .as_ref()
+        .is_some_and(|visit| visit.spawned.is_some())
 }
 
 /// `[0xB77DC1]`: a WOL match runs.

@@ -17,7 +17,7 @@ use crate::render::batch::SpriteInstance;
 use crate::render::shell_text::{self, ShellAlign, ShellTextDraw};
 use crate::ui::shell::geom::RectPx;
 use crate::ui::wol_login::{LoginPolicy, WolLoginLayout, WolLoginState};
-use std::time::Instant;
+use crate::util::time::Instant;
 
 /// Sprites (skirmish atlas) and texts of `0x10F`'s children; `popup` paints
 /// after everything else.
@@ -95,7 +95,7 @@ pub(crate) fn paint_wol_login_children(
             ControlPaint::Combo {
                 rect: layout.nickname_face,
                 swatch: None,
-                open: login.combo_open,
+                open: login.popup.control.is_some(),
                 disabled: false,
             },
             scale,
@@ -187,8 +187,9 @@ pub(crate) fn paint_wol_login_children(
             SHELL_CONTROL_TEXT_DEPTH,
         ));
     } else {
+        // Under the field, starting where its text does.
         let rect = scale.derive_rect(layout.nickname_face, |rect| {
-            RectPx::new(rect.x - 100, rect.y + 34, 380, 36)
+            RectPx::new(rect.x + 3, rect.y + rect.h + 4, rect.w - 6, 16)
         });
         paint.texts.push(text(
             "Use 1-24 letters, digits, _ or -.",
@@ -204,10 +205,10 @@ pub(crate) fn paint_wol_login_children(
             &mut paint.popup,
             atlas,
             popup.rect,
-            login.combo_hot_row.and_then(|row| popup.row_rect(row)),
+            login.popup.hot_row.and_then(|row| popup.row_rect(row)),
             [],
             popup.scrollbar().zip(popup.thumb()),
-            login.combo_scroll.pressed_part().map(dropdown_scroll_part),
+            login.popup.scroll.pressed_part().map(dropdown_scroll_part),
             scale,
             SHELL_DROPDOWN_DEPTH - 0.00002,
         );

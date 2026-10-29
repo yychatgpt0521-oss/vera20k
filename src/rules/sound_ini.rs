@@ -418,6 +418,16 @@ impl SoundRegistry {
         self.entries.get(&sound_id.to_ascii_uppercase())
     }
 
+    /// VocClass::FindIndex7514D0 returns the first registered slot matching
+    /// the raw name, case-insensitively. TAction::Read6DD7CE stores this
+    /// ordinal in +90 even when Execute uses it as a non-audio scalar.
+    pub fn index_of(&self, sound_id: &str) -> Option<i32> {
+        self.native_order
+            .iter()
+            .position(|key| key.eq_ignore_ascii_case(sound_id))
+            .and_then(|index| i32::try_from(index).ok())
+    }
+
     /// Literal action+90 consumers index the Voc array registered by7512CA..
     ///75133D. Duplicate IDs keep their first slot; a negative/missing slot is
     ///the existing safe invalid-reference boundary, without creating a sound.
@@ -434,6 +444,26 @@ impl SoundRegistry {
     pub(crate) fn read_rules_reference(&self, section: &IniSection, key: &str) -> Option<String> {
         section.read_string_with(key, 0x80, None, |current, name| {
             self.get(name).map(|entry| entry.id.clone()).or(current)
+        })
+    }
+
+    /// Ares NullableIdx<Voc>1000E9D0: ReadString2048, FindIndex7514D0
+    /// through1000D520, then none only if lookup failed. A registered name
+    /// spelled `none` is still a cue. Unset and explicit -1 stay distinct.
+    #[cfg(feature = "ares")]
+    pub(crate) fn read_ares_reference(
+        &self,
+        section: &IniSection,
+        key: &str,
+    ) -> Option<Option<String>> {
+        section.read_string_with(key, 2048, None, |current, name| {
+            if let Some(entry) = self.get(name) {
+                Some(Some(entry.id.clone()))
+            } else if crate::rules::ini_parser::is_native_none_type_name(name) {
+                Some(None)
+            } else {
+                current
+            }
         })
     }
 

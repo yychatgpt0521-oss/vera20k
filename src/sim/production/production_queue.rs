@@ -109,14 +109,6 @@ pub fn build_options_for_owner(sim: &Simulation, rules: &RuleSet, owner: &str) -
         .collect()
 }
 
-/// True if this owner has at least one buildable production option — useful
-/// for picking a likely local player house in UI code.
-pub fn has_build_option_for_owner(sim: &Simulation, rules: &RuleSet, owner: &str) -> bool {
-    super::production_tech::all_build_options_for_owner(sim, rules, owner)
-        .iter()
-        .any(|o| o.enabled)
-}
-
 /// StripClass::AI6A8DC6 visits the local sidebar's retained Factory links.
 /// HasChanged4C9C60 is consumed before IsComplete4CA130, in entry order; a
 /// remote or absent strip never consumes that Factory's notification. Mobile
@@ -296,6 +288,20 @@ pub(in crate::sim) fn exit_produced_object(
         );
         if let Some(house) = sim.houses.get_mut(&owner_id) {
             house.ai_unit_choices_mut().clear(kind);
+            // Phobos `BuildingClass_KickOutUnit_UnitType/InfantryType/
+            // AircraftType` (`0x444119`, `0x444131`, `0x443CCA`) clears the
+            // house's factory slot at this prefix, before FreeRadio and
+            // placement retries can leave the product held.
+            #[cfg(feature = "phobos")]
+            if rules.parallel_ai_queues().allows_parallel() {
+                let slot = crate::sim::ai_base_building::AiFactorySlot::for_product(
+                    product_type.category,
+                    producer_type.naval,
+                );
+                house
+                    .ai_production_mut()
+                    .clear_parallel_factory(slot, producer_id);
+            }
             // NPSE 2.0 C2EF95 (aircraft), C3395E/C3397F (vehicle),
             // C2F184 (infantry): release at this prefix, before later
             // placement/FreeRadio retries can leave the object held.
