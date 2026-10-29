@@ -678,6 +678,17 @@ impl ProcessedRulesLayers {
             .ares_global_controls
     }
 
+    /// The Ares `[MouseCursors]` table, retained like the Type registries.
+    #[cfg(feature = "ares")]
+    pub(crate) fn ares_mouse_cursors(
+        &self,
+    ) -> &crate::rules::ares_mouse_cursors::MouseCursorCatalog {
+        &self
+            .native_type_construction_trace
+            .registry_state()
+            .ares_mouse_cursors
+    }
+
     /// Ares definitions have the same retained process lifetime as Types.
     pub(crate) fn ares_prerequisites(&self) -> Option<&GenericPrerequisites> {
         self.native_type_construction_trace
@@ -3328,6 +3339,9 @@ pub(crate) struct NativeRulesRegistryState {
     phobos_digital_display_types: Option<DigitalDisplayTypeCatalog>,
     #[cfg(feature = "ares")]
     ares_global_controls: AresGlobalControls,
+    /// Ares cursor table; a destructive reset rebuilds it (`0x100074C0`).
+    #[cfg(feature = "ares")]
+    ares_mouse_cursors: crate::rules::ares_mouse_cursors::MouseCursorCatalog,
     families: HashMap<RulesTypeFamily, Vec<ProcessedType>>,
     /// TechnoTypeClass::Array A8EB04/countA8EB10. Each pair points to the
     /// existing family member; names alone cannot distinguish repeated native
@@ -3428,6 +3442,8 @@ impl Default for NativeRulesRegistryState {
                 .then(DigitalDisplayTypeCatalog::default),
             #[cfg(feature = "ares")]
             ares_global_controls: AresGlobalControls::default(),
+            #[cfg(feature = "ares")]
+            ares_mouse_cursors: Default::default(),
             families: HashMap::new(),
             techno_type_order: Vec::new(),
             tiberiums: Vec::new(),
@@ -4931,6 +4947,8 @@ struct RulesPassProcessor {
     phobos_digital_display_types: Option<DigitalDisplayTypeCatalog>,
     #[cfg(feature = "ares")]
     ares_global_controls: AresGlobalControls,
+    #[cfg(feature = "ares")]
+    ares_mouse_cursors: crate::rules::ares_mouse_cursors::MouseCursorCatalog,
     ordinary: Option<IniFile>,
     crate_rules: CrateRules,
     powerups: PowerupsAccumulator,
@@ -5014,6 +5032,8 @@ impl RulesPassProcessor {
             phobos_digital_display_types: registry_state.phobos_digital_display_types,
             #[cfg(feature = "ares")]
             ares_global_controls: registry_state.ares_global_controls,
+            #[cfg(feature = "ares")]
+            ares_mouse_cursors: registry_state.ares_mouse_cursors,
             families: registry_state.families,
             techno_type_order: registry_state.techno_type_order,
             tiberiums: registry_state.tiberiums,
@@ -6043,6 +6063,10 @@ impl RulesPassProcessor {
             .as_mut()
             .expect("Ares Rules own armor catalog")
             .read_pass(pass);
+        // The same 1002AEF0 reads [MouseCursors] (1002B125) after the armor
+        // registry, before any type body names a cursor.
+        #[cfg(feature = "ares")]
+        self.ares_mouse_cursors.read_pass(pass);
         // Ares RulesClass_BeforeTypeData679A15 -> 1002AEF0. This is after
         // registry allocation but before any TechnoType body in this pass.
         // Move out and back while reading the existing registries; this is
@@ -8254,6 +8278,8 @@ impl RulesPassProcessor {
                     phobos_digital_display_types: self.phobos_digital_display_types,
                     #[cfg(feature = "ares")]
                     ares_global_controls: self.ares_global_controls,
+                    #[cfg(feature = "ares")]
+                    ares_mouse_cursors: self.ares_mouse_cursors,
                     families: self.families,
                     techno_type_order: self.techno_type_order,
                     tiberiums: self.tiberiums,

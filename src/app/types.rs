@@ -345,6 +345,11 @@ pub(crate) enum CursorFeedbackKind {
     /// Engineer action28 damage cursor. Its uncommon authored-threshold
     /// display route remains outside the ordinary repair cursor proof.
     EngineerDamage,
+    /// An Ares `[MouseCursors]` cursor (table index) that a type key, a super
+    /// weapon or an Ares action gives the native action
+    /// ([`crate::app::input::cursor`]'s `ares_action_cursor`).
+    #[cfg(feature = "ares")]
+    AresCursor(u16),
     /// Engineer object action29/32: shared normal Repair/NoRepair rows.
     RepairAction(bool),
     /// C4 plant cursor — SEAL/Tanya/PTROOP hovering a CanC4 enemy structure

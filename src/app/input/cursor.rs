@@ -148,6 +148,24 @@ pub(crate) fn current_cursor_feedback_kind(state: &AppState) -> Option<CursorFee
         selected.is_empty(),
     );
     if let super::state::TacticalPointerMode::SuperWeapon(section) = pointer_mode {
+        // Ares SWTypeExt `Cursor=`/`NoCursor=` name the valid and refused
+        // targeting cursors (docs: new/superweapons).
+        #[cfg(feature = "ares")]
+        let ares_cursor = |no_cursor: bool| {
+            let rules = state.rules()?;
+            let sw = rules.super_weapon(section)?;
+            let name = if no_cursor {
+                &sw.ares_no_cursor
+            } else {
+                &sw.ares_cursor
+            };
+            rules
+                .ares_mouse_cursors()
+                .resolve(name.as_deref())
+                .map(CursorId::Ares)
+        };
+        #[cfg(not(feature = "ares"))]
+        let ares_cursor = |_: bool| None;
         if let Some(runtime) = state.match_state.sim_runtime.as_ref()
             && let Some(owner) = preferred_local_owner_name(state)
                 .and_then(|name| runtime.simulation.interner().get(&name))
@@ -163,21 +181,26 @@ pub(crate) fn current_cursor_feedback_kind(state: &AppState) -> Option<CursorFee
                 .super_weapon_target_check(&runtime.resources.rules, owner, sw_type, cell, false)
                 .is_err()
             {
-                return Some(CursorFeedbackKind::SuperWeaponTarget(CursorId::Default));
+                return Some(CursorFeedbackKind::SuperWeaponTarget(
+                    ares_cursor(true).unwrap_or(CursorId::Default),
+                ));
             }
         }
         if !crate::app::input::commands::super_weapon_pointer_target_at_cursor_is_valid(
             state, section,
         ) {
             return Some(CursorFeedbackKind::SuperWeaponTarget(
-                CursorId::NoForceShield,
+                ares_cursor(true).unwrap_or(CursorId::NoForceShield),
             ));
         }
-        let cursor_id = state
-            .rules()
-            .and_then(|r| r.super_weapon(section))
-            .and_then(|sw| sw.action.as_deref())
-            .and_then(super_weapon_cursor_id)
+        let cursor_id = ares_cursor(false)
+            .or_else(|| {
+                state
+                    .rules()
+                    .and_then(|r| r.super_weapon(section))
+                    .and_then(|sw| sw.action.as_deref())
+                    .and_then(super_weapon_cursor_id)
+            })
             .unwrap_or(CursorId::Default);
         return Some(CursorFeedbackKind::SuperWeaponTarget(cursor_id));
     }
@@ -287,7 +310,95 @@ pub(crate) fn current_cursor_feedback_kind(state: &AppState) -> Option<CursorFee
         });
         return no_selection_cursor(hover.as_ref());
     }
-    query.selection_action(cell, hover_object)
+    let kind = query.selection_action(cell, hover_object)?;
+    #[cfg(feature = "ares")]
+    let kind = ares_action_cursor(&query, cell, hover_object, kind);
+    Some(kind)
+}
+
+/// The cursor Ares draws for the tactical action `kind`: its per-action
+/// slots (`0x10057E20`), which DisplayClass_SetAction_CustomCursor
+/// (`0x4AB35A` -> `0x10057F10`) shows in place of the action's native row.
+/// - TechnoClass_GetActionOnObject/OnCell_Cursors (`0x6FFEC0` ->
+///   `0x1004C990`, `0x700600` -> `0x1004C920`): Move (1) and NoMove (2) take
+///   the acting type's `Cursor.Move`/`Cursor.NoMove`; over an object, Enter
+///   (3) and NoEnter (0x1F) take the target type's `Cursor.Enter`/`NoEnter`.
+/// - TechnoClass_GetActionOnObject_SelfDeployCursor (`0x7000CD` ->
+///   `0x1004CA20`): Self_Deploy (4) and NoDeploy (0x1E) take the type's
+///   `Cursor.Deploy`/`Cursor.NoDeploy`.
+/// - The infiltration hook (`0x10026017..0x10026037`): an Agent's
+///   infiltration (action 9) takes the building type's `Cursor.Spy`, an
+///   occupation or capture (also 9) keeps Enter's row.
+/// - The hijack hook (`0x100496EF`): TakeVehicle.
+///
+/// The radar keeps the native rows: its actions feed clicks too.
+/// RESIDUAL: Ares's other slots (weapon `Cursor.Attack`/`AttackOutOfRange`,
+/// Sabotage, InfantryHeal/UnitRepair, RepairTrench, a bunkered unit's Deploy)
+/// and the radar sets of these cursors are not bound.
+#[cfg(feature = "ares")]
+fn ares_action_cursor(
+    query: &ActionQuery<'_>,
+    (cell_rx, cell_ry): (u16, u16),
+    hover_object: Option<HoverObject>,
+    kind: CursorFeedbackKind,
+) -> CursorFeedbackKind {
+    use crate::rules::ares_mouse_cursors::{TAKE_VEHICLE, TechnoCursors};
+    let (sim, Some(rules)) = (query.sim, query.rules) else {
+        return kind;
+    };
+    let target = hover_object.map_or(
+        ActionDistanceTarget::CellCentre(cell_rx, cell_ry),
+        |object| ActionDistanceTarget::Object(object.id()),
+    );
+    let actor = select_best_for_action(sim, query.selected, target, query.rules);
+    let target = hover_object
+        .and_then(HoverObject::techno)
+        .map(|hover| hover.stable_id);
+    let type_of = |id: u64| {
+        sim.entities()
+            .get(id)
+            .and_then(|entity| sim.interner().object_type(entity.type_ref(), rules))
+    };
+    let named = |id: Option<u64>, key: fn(&TechnoCursors) -> &Option<String>| {
+        rules
+            .ares_mouse_cursors()
+            .resolve(key(type_of(id?)?.ares_cursors()).as_deref())
+            .map(CursorFeedbackKind::AresCursor)
+    };
+    let enter = || {
+        let (actor_id, target_id) = (actor?, target?);
+        let (actor_type, target_type) = (type_of(actor_id)?, type_of(target_id)?);
+        if super::context_order::vehicle_capture_action(
+            sim,
+            rules,
+            actor_id,
+            target_id,
+            query.modifier,
+            query.force_move_key,
+        ) {
+            return Some(CursorFeedbackKind::AresCursor(TAKE_VEHICLE));
+        }
+        if actor_type.agent && sim.infiltrator_building_action(actor_id, target_id, rules) {
+            return named(target, |cursors| &cursors.spy);
+        }
+        if actor_type.engineer
+            || (actor_type.category == crate::rules::object_type::ObjectCategory::Infantry
+                && target_type.can_be_occupied)
+        {
+            return None;
+        }
+        named(target, |cursors| &cursors.enter)
+    };
+    match kind {
+        CursorFeedbackKind::Move => named(actor, |cursors| &cursors.move_),
+        CursorFeedbackKind::Invalid => named(actor, |cursors| &cursors.no_move),
+        CursorFeedbackKind::Deploy => named(actor, |cursors| &cursors.deploy),
+        CursorFeedbackKind::NoDeploy => named(actor, |cursors| &cursors.no_deploy),
+        CursorFeedbackKind::NoEnter => named(target, |cursors| &cursors.no_enter),
+        CursorFeedbackKind::Enter => enter(),
+        _ => None,
+    }
+    .unwrap_or(kind)
 }
 
 /// What the selection's best object is asked with besides the Cell and the
@@ -909,9 +1020,8 @@ pub(super) fn capability_cursor_for_hover(
                 force_move_key,
             )
         }) {
-            // Ares100496EF selects TakeVehicle92. Its default constructor
-            //1000735C..10007370 copies native Enter25's complete descriptor.
-            // RESIDUAL: custom [MouseCursors] overrides are not bound yet.
+            // Ares100496EF selects TakeVehicle92 for the shown cursor
+            // (`ares_action_cursor`); the action itself is Enter's.
             return CursorFeedbackKind::Enter;
         }
 
@@ -1572,11 +1682,14 @@ pub(crate) fn cursor_id_for_feedback(kind: CursorFeedbackKind) -> Option<CursorI
         CursorFeedbackKind::Minimap(id) => Some(id),
         CursorFeedbackKind::Enter | CursorFeedbackKind::Grind => Some(CursorId::Enter),
         CursorFeedbackKind::NoEnter => Some(CursorId::NoEnter),
-        // Ares names this action's cursor EngineerDamage and defaults it to
-        // Detonate (docs: new/mousecursors); Mental Omega keeps that default.
-        // [MouseCursors] overrides are not bound yet.
+        // Ares10025565 shows its EngineerDamage cursor, a copy of Detonate
+        // (10007261) unless [MouseCursors] redefines it.
         #[cfg(feature = "ares")]
-        CursorFeedbackKind::EngineerDamage => Some(CursorId::Detonate),
+        CursorFeedbackKind::EngineerDamage => Some(CursorId::Ares(
+            crate::rules::ares_mouse_cursors::ENGINEER_DAMAGE,
+        )),
+        #[cfg(feature = "ares")]
+        CursorFeedbackKind::AresCursor(index) => Some(CursorId::Ares(index)),
         #[cfg(not(feature = "ares"))]
         CursorFeedbackKind::EngineerDamage => Some(CursorId::EngineerRepair),
         CursorFeedbackKind::RepairAction(valid) => Some(if valid {
@@ -2089,9 +2202,83 @@ mod tests {
     #[cfg(feature = "ares")]
     #[test]
     fn ares_engineer_damage_uses_the_detonate_cursor() {
+        use crate::rules::ares_mouse_cursors::{ENGINEER_DAMAGE, MouseCursorCatalog, NATIVE_ROWS};
         assert_eq!(
             super::cursor_id_for_feedback(CursorFeedbackKind::EngineerDamage),
-            Some(CursorId::Detonate)
+            Some(CursorId::Ares(ENGINEER_DAMAGE))
+        );
+        assert_eq!(NATIVE_ROWS[51].0, "Detonate");
+        assert_eq!(
+            MouseCursorCatalog::default().get(ENGINEER_DAMAGE),
+            Some(NATIVE_ROWS[51].1)
+        );
+    }
+
+    /// Ares type cursor keys name the tactical cursor: a tank's `Cursor.Move=`
+    /// and, for an Agent's infiltration, the Spyable building's `Cursor.Spy=`
+    /// (Mental Omega's SBTR over a `Cursor.Spy=SpyStar` building). A type
+    /// without the key keeps the native action's row.
+    #[cfg(feature = "ares")]
+    #[test]
+    fn ares_type_cursor_keys_name_the_shown_cursor() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[MouseCursors]\nSpyStar=1002,10,5,100,10,Center,Middle\n\
+             [InfantryTypes]\n0=SPY\n[VehicleTypes]\n0=TANK\n[BuildingTypes]\n0=POWR\n\
+             [SPY]\nStrength=100\nAgent=yes\nInfiltrate=yes\n\
+             [TANK]\nStrength=100\nCursor.Move=SpyStar\n\
+             [POWR]\nStrength=100\nSpyable=yes\nCursor.Spy=SpyStar\n",
+        ))
+        .expect("cursor key rules");
+        let star = rules
+            .ares_mouse_cursors()
+            .index_of("SpyStar")
+            .expect("SpyStar");
+        let mut sim = Simulation::new();
+        sim.resolve_type_handles(&rules);
+        let spy = sim
+            .spawn_object("SPY", "Americans", 5, 5, 0, &rules)
+            .expect("spy");
+        let tank = sim
+            .spawn_object("TANK", "Americans", 6, 5, 0, &rules)
+            .expect("tank");
+        let plant = sim
+            .spawn_object("POWR", "Soviets", 10, 10, 0, &rules)
+            .expect("plant");
+        sim.session_mut_for_test().set_game_mode(
+            crate::sim::scenario_session::ScenarioGameMode::from_legacy_nonzero(true),
+        );
+        let house = sim.interner().get("Americans");
+        sim.session_mut_for_test().set_current_house_for_test(house);
+        let ask = |selected: &[u64], hover: Option<u64>, kind| {
+            let query = super::ActionQuery {
+                sim: &sim,
+                rules: Some(&rules),
+                overlays: None,
+                viewer: house,
+                selected,
+                modifier: crate::app::input::context_order::OrderModifier::Normal,
+                force_move_key: false,
+                order_mode: crate::app::types::OrderMode::Move,
+                planning: false,
+                mouse_over: true,
+                full_visibility: true,
+            };
+            let hover = hover.and_then(|id| {
+                crate::app::input::entity_pick::hover_object_by_id(&sim, id, "Americans")
+            });
+            super::ares_action_cursor(&query, (8, 8), hover, kind)
+        };
+        assert_eq!(
+            ask(&[tank], None, CursorFeedbackKind::Move),
+            CursorFeedbackKind::AresCursor(star)
+        );
+        assert_eq!(
+            ask(&[spy], Some(plant), CursorFeedbackKind::Enter),
+            CursorFeedbackKind::AresCursor(star)
+        );
+        assert_eq!(
+            ask(&[spy], None, CursorFeedbackKind::Move),
+            CursorFeedbackKind::Move
         );
     }
     use super::{

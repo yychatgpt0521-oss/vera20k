@@ -4504,6 +4504,9 @@ pub struct RuleSet {
     emp_sparkles: Option<String>,
     #[cfg(feature = "ares")]
     ares_global_controls: crate::rules::native_processing::AresGlobalControls,
+    /// Projection of the retained Ares `[MouseCursors]` table.
+    #[cfg(feature = "ares")]
+    ares_mouse_cursors: crate::rules::ares_mouse_cursors::MouseCursorCatalog,
     /// Derived type-membership index for the lifecycle hooks; rebuilt together
     /// with the RuleSet after every load/reset/pass. The catalog above is its
     /// only source of truth. This cache is not serialized or hashed separately.
@@ -4743,6 +4746,12 @@ impl RuleSet {
         {
             None
         }
+    }
+
+    /// The Ares `[MouseCursors]` table every cursor-valued key resolves in.
+    #[cfg(feature = "ares")]
+    pub fn ares_mouse_cursors(&self) -> &crate::rules::ares_mouse_cursors::MouseCursorCatalog {
+        &self.ares_mouse_cursors
     }
 
     pub(crate) fn bind_emp_sparkles(&mut self, name: Option<String>) {
@@ -6322,6 +6331,8 @@ impl RuleSet {
             emp_sparkles: None,
             #[cfg(feature = "ares")]
             ares_global_controls: processed.ares_global_controls().clone(),
+            #[cfg(feature = "ares")]
+            ares_mouse_cursors: processed.ares_mouse_cursors().clone(),
             #[cfg(feature = "ares")]
             ares_super_weapon_metadata: BTreeMap::new(),
             #[cfg(feature = "phobos")]

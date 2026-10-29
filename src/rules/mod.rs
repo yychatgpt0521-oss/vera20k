@@ -149,6 +149,8 @@ pub const NPATCH_ENABLED: bool = cfg!(feature = "npatch");
 /// change it; builds without the feature keep every stock path.
 pub const VERAX_ENABLED: bool = cfg!(feature = "verax");
 pub(crate) mod ares_prerequisites;
+#[cfg(feature = "ares")]
+pub mod ares_mouse_cursors;
 pub(crate) mod ares_armor;
 pub(crate) mod ares_emp;
 pub(crate) mod ares_abilities;

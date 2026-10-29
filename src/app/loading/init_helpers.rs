@@ -694,8 +694,29 @@ pub(crate) fn finish_presentation_assets(
     if building_zshape.is_none() {
         log::warn!("BUILDNGZ.SHA not loaded: building bodies write flat depth");
     }
-    let software_cursor =
+    #[cfg_attr(not(feature = "ares"), allow(unused_mut))]
+    let mut software_cursor =
         crate::render::cursor_atlas::build_software_cursor(gpu, batch, asset_manager);
+    // Ares [MouseCursors]: the changed native rows and every named cursor a
+    // type key, a super weapon or an Ares action shows.
+    #[cfg(feature = "ares")]
+    if let Some(cursor) = software_cursor.as_mut() {
+        use crate::rules::ares_mouse_cursors::{ENGINEER_DAMAGE, TAKE_VEHICLE};
+        let catalog = rules.ares_mouse_cursors();
+        let referenced: std::collections::BTreeSet<u16> = rules
+            .all_objects()
+            .flat_map(|object| object.ares_cursors().names())
+            .chain(rules.super_weapons.values().flat_map(|sw| {
+                sw.ares_cursor
+                    .iter()
+                    .chain(&sw.ares_no_cursor)
+                    .map(String::as_str)
+            }))
+            .filter_map(|name| catalog.index_of(name))
+            .chain([ENGINEER_DAMAGE, TAKE_VEHICLE])
+            .collect();
+        cursor.install_ares_cursors(gpu, batch, asset_manager, catalog, referenced);
+    }
     if software_cursor.is_some() {
         log::info!("Software cursor loaded from mouse.sha — OS cursor will be hidden");
     } else {

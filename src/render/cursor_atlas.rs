@@ -141,6 +141,110 @@ pub(crate) enum CursorId {
     PsychicReveal,
     SpyPlane,
     Beacon,
+    /// An Ares `[MouseCursors]` cursor by its table index
+    /// ([`crate::rules::ares_mouse_cursors::MouseCursorCatalog`]): one a type
+    /// key, a super weapon or an Ares action names.
+    #[cfg(feature = "ares")]
+    Ares(u16),
+}
+
+impl CursorId {
+    /// The native descriptor row (`0x0082D028`) this cursor draws, and
+    /// whether it draws that row's radar (mini) set.
+    #[cfg(feature = "ares")]
+    fn native_row(self) -> Option<(usize, bool)> {
+        use CursorId as C;
+        let main = |row| Some((row, false));
+        let mini = |row| Some((row, true));
+        match self {
+            // Ares does not support changing Default (docs: new/mousecursors).
+            C::Default | C::DefaultMini | C::Ares(_) => None,
+            C::ScrollN => main(1),
+            C::ScrollNE => main(2),
+            C::ScrollE => main(3),
+            C::ScrollSE => main(4),
+            C::ScrollS => main(5),
+            C::ScrollSW => main(6),
+            C::ScrollW => main(7),
+            C::ScrollNW => main(8),
+            C::NoMoveN => main(9),
+            C::NoMoveNE => main(10),
+            C::NoMoveE => main(11),
+            C::NoMoveSE => main(12),
+            C::NoMoveS => main(13),
+            C::NoMoveSW => main(14),
+            C::NoMoveW => main(15),
+            C::NoMoveNW => main(16),
+            C::Select => main(17),
+            C::Move => main(18),
+            C::MinimapMove => mini(18),
+            C::NoMove => main(19),
+            C::MinimapNoMove => mini(19),
+            C::Attack => main(20),
+            C::MinimapAttack => mini(20),
+            C::AttackOutOfRange => main(21),
+            C::GuardArea => main(22),
+            C::MinimapGuardArea => mini(22),
+            C::DesolatorDeploy => main(23),
+            C::Enter => main(25),
+            C::MinimapEnter => mini(25),
+            C::NoEnter => main(26),
+            C::MinimapNoEnter => mini(26),
+            C::Deploy => main(27),
+            C::NoDeploy => main(28),
+            C::Sell => main(30),
+            C::SellUnit => main(31),
+            C::NoSell => main(32),
+            C::Repair => main(33),
+            C::EngineerRepair => main(34),
+            C::NoRepair => main(35),
+            C::Disguise => main(37),
+            C::IvanBomb => main(38),
+            C::MindControl => main(39),
+            C::RemoveSquid => main(40),
+            C::Crush => main(41),
+            C::SpyTech => main(42),
+            C::SpyPower => main(43),
+            C::GIDeploy => main(45),
+            C::Paradrop => main(47),
+            C::ParadropMini => mini(47),
+            C::LightningStorm => main(50),
+            C::LightningStormMini => mini(50),
+            C::Detonate => main(51),
+            C::Demolish => main(52),
+            C::Nuke => main(53),
+            C::NukeMini => mini(53),
+            C::Tote => main(54),
+            C::TogglePower => main(55),
+            C::IronCurtain => main(57),
+            C::Chronosphere => main(58),
+            C::Disarm => main(59),
+            C::NoTogglePower => main(60),
+            C::Pan => main(61),
+            C::PanN => main(62),
+            C::PanNE => main(63),
+            C::PanE => main(64),
+            C::PanSE => main(65),
+            C::PanS => main(66),
+            C::PanSW => main(67),
+            C::PanW => main(68),
+            C::PanNW => main(69),
+            C::AttackMove => main(71),
+            C::InfantryAbsorb => main(73),
+            C::NoMindControl => main(74),
+            C::Beacon => main(78),
+            C::ForceShield => main(79),
+            C::NoForceShield => main(80),
+            C::GeneticMutator => main(81),
+            C::AirStrike => main(82),
+            C::PsychicDominator => main(83),
+            C::PsychicDominatorMini => mini(83),
+            C::PsychicReveal => main(84),
+            C::PsychicRevealMini => mini(84),
+            C::SpyPlane => main(85),
+            C::SpyPlaneMini => mini(85),
+        }
+    }
 }
 
 /// All loaded cursor animation sequences from mouse.sha, keyed by CursorId.
@@ -624,11 +728,7 @@ const CURSOR_DEFS: &[(CursorId, usize, usize, u64, CursorHotspot)] = &[
     ),
 ];
 
-pub(crate) fn build_software_cursor(
-    gpu: &GpuContext,
-    batch: &BatchRenderer,
-    asset_manager: &AssetManager,
-) -> Option<SoftwareCursor> {
+fn load_mouse_shape(asset_manager: &AssetManager) -> Option<(ShpFile, Palette)> {
     // Init_Game 0x0052BA60 converts MOUSEPAL.PAL like every palette load.
     let palette = asset_manager
         .get_ref("mousepal.pal")
@@ -644,9 +744,97 @@ pub(crate) fn build_software_cursor(
             .or_else(|| asset_manager.get_ref("mouse.shp"))?;
         ShpFile::from_bytes(shp_data).ok()?
     };
-    if shp.frames.is_empty() {
-        return None;
+    (!shp.frames.is_empty()).then_some((shp, palette))
+}
+
+/// One Ares cursor's main or radar set: `MouseClass_GetCursorFirstFrame`
+/// and its siblings (`0x5BE974`, `0x5BE994`, `0x5BDC1B`) read the Ares row
+/// as the native ones read the descriptor table. A radar set with no first
+/// frame draws the main set (`0x5BDD1B`); a count below one pins one frame.
+#[cfg(feature = "ares")]
+fn ares_cursor_set(
+    cursor: crate::rules::ares_mouse_cursors::MouseCursor,
+    mini: bool,
+) -> (usize, usize, u64, [i32; 2]) {
+    let (frame, count) = if mini && cursor.mini_frame != -1 {
+        (cursor.mini_frame, cursor.mini_count)
+    } else {
+        (cursor.frame, cursor.count)
+    };
+    (
+        usize::try_from(frame).unwrap_or(0),
+        usize::try_from(count).unwrap_or(0).max(1),
+        u64::try_from(cursor.interval).unwrap_or(0) * CURSOR_TIMER_UNIT_MS,
+        [cursor.hotspot_x, cursor.hotspot_y],
+    )
+}
+
+/// `Set_Mouse_Cursor_Shape`'s sentinel decode (`0x005BDD27..0x005BDD74`):
+/// 12345 halves the canvas side, 54321 is the full side, anything else 0.
+#[cfg(feature = "ares")]
+fn sentinel_hotspot([x, y]: [i32; 2], width: u16, height: u16) -> [f32; 2] {
+    let axis = |value, side: u16| match value {
+        12345 => f32::from(side / 2),
+        54321 => f32::from(side),
+        _ => 0.0,
+    };
+    [axis(x, width), axis(y, height)]
+}
+
+impl SoftwareCursor {
+    /// Bind the Ares `[MouseCursors]` table: rebuild every native row the
+    /// table changed and build the named cursors `referenced` lists.
+    #[cfg(feature = "ares")]
+    pub(crate) fn install_ares_cursors(
+        &mut self,
+        gpu: &GpuContext,
+        batch: &BatchRenderer,
+        asset_manager: &AssetManager,
+        catalog: &crate::rules::ares_mouse_cursors::MouseCursorCatalog,
+        referenced: impl IntoIterator<Item = u16>,
+    ) {
+        use crate::rules::ares_mouse_cursors::NATIVE_ROWS;
+        let Some((shp, palette)) = load_mouse_shape(asset_manager) else {
+            return;
+        };
+        let mut build = |cursor, mini| {
+            let (start, count, interval_ms, hotspot) = ares_cursor_set(cursor, mini);
+            let frames: Vec<_> = (start..start + count)
+                .filter_map(|frame| build_cursor_frame(gpu, batch, &shp, &palette, frame))
+                .collect();
+            (!frames.is_empty()).then(|| SoftwareCursorSequence {
+                frames,
+                interval_ms,
+                hotspot: sentinel_hotspot(hotspot, shp.width, shp.height),
+            })
+        };
+        for &(id, ..) in CURSOR_DEFS {
+            let Some((row, mini)) = id.native_row() else {
+                continue;
+            };
+            let Some(cursor) = catalog.get(row as u16) else {
+                continue;
+            };
+            if cursor != NATIVE_ROWS[row].1
+                && let Some(sequence) = build(cursor, mini)
+            {
+                self.sequences.insert(id, sequence);
+            }
+        }
+        for index in referenced {
+            if let Some(sequence) = catalog.get(index).and_then(|cursor| build(cursor, false)) {
+                self.sequences.insert(CursorId::Ares(index), sequence);
+            }
+        }
     }
+}
+
+pub(crate) fn build_software_cursor(
+    gpu: &GpuContext,
+    batch: &BatchRenderer,
+    asset_manager: &AssetManager,
+) -> Option<SoftwareCursor> {
+    let (shp, palette) = load_mouse_shape(asset_manager)?;
 
     maybe_export_mouse_sheet(&shp, &palette);
 

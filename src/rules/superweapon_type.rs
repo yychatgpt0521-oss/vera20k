@@ -451,6 +451,13 @@ pub struct SuperWeaponType {
     /// `SW.AutoFire=yes` type's cameo off the ordinary right-sidebar strip.
     #[cfg(any(feature = "ares", feature = "phobos"))]
     pub sw_show_cameo: bool,
+    /// Ares `Cursor=` / `NoCursor=` (SWTypeExt, read at 0x100336D5/0x100336EB
+    /// as `[MouseCursors]` names): the targeting cursor over a valid cell and
+    /// over a refused one.
+    #[cfg(feature = "ares")]
+    pub ares_cursor: Option<String>,
+    #[cfg(feature = "ares")]
+    pub ares_no_cursor: Option<String>,
     /// Phobos `SuperWeaponSidebar.Allow=`. Unset falls back to
     /// `[AudioVisual] SuperWeaponSidebar.AllowByDefault`.
     #[cfg(feature = "phobos")]
@@ -634,6 +641,10 @@ impl SuperWeaponType {
             manual_control: section.read_bool("ManualControl", false),
             #[cfg(any(feature = "ares", feature = "phobos"))]
             sw_show_cameo: section.read_bool("SW.ShowCameo", true),
+            #[cfg(feature = "ares")]
+            ares_cursor: section.read_name("Cursor", 0x800).map(str::to_owned),
+            #[cfg(feature = "ares")]
+            ares_no_cursor: section.read_name("NoCursor", 0x800).map(str::to_owned),
             #[cfg(feature = "phobos")]
             sw_sidebar_allow: section.read_bool_value("SuperWeaponSidebar.Allow"),
             // Both lists use Phobos's ReadHouseTypesList, YRpp's jump to

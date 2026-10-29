@@ -1045,6 +1045,9 @@ pub struct ObjectType {
     /// Ares `Insignia.ShowEnemy`; unset uses `[General] EnemyInsignia`.
     #[cfg(feature = "ares")]
     insignia_show_enemy: Option<bool>,
+    /// Ares `Cursor.*` (and a BuildingType's `Cursor.Spy`) cursor names.
+    #[cfg(feature = "ares")]
+    ares_cursors: crate::rules::ares_mouse_cursors::TechnoCursors,
     /// Ares 3.0 `Convert.Deploy`: the TechnoType an `IsSimpleDeployer=` unit
     /// becomes once its deploy completes, bound by the retained rules reader.
     #[cfg(feature = "ares")]
@@ -2766,6 +2769,11 @@ impl ObjectType {
     }
 
     #[cfg(feature = "ares")]
+    pub fn ares_cursors(&self) -> &crate::rules::ares_mouse_cursors::TechnoCursors {
+        &self.ares_cursors
+    }
+
+    #[cfg(feature = "ares")]
     pub(crate) fn deploy_conversion(
         &self,
     ) -> Option<&crate::rules::superweapon_type::DeliveryType> {
@@ -4072,6 +4080,8 @@ impl ObjectType {
             },
             #[cfg(feature = "ares")]
             insignia_show_enemy: section.read_ares_nullable_bool("Insignia.ShowEnemy", None),
+            #[cfg(feature = "ares")]
+            ares_cursors: crate::rules::ares_mouse_cursors::TechnoCursors::read(section),
             #[cfg(feature = "ares")]
             convert_deploy: None,
             #[cfg(feature = "ares")]

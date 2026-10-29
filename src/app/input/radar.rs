@@ -112,6 +112,9 @@ impl RadarAction {
             | Kind::SellMode(_)
             | Kind::PlaceBeacon
             | Kind::SuperWeaponTarget(_) => return None,
+            // A tactical cursor shape only; the radar keeps the native action.
+            #[cfg(feature = "ares")]
+            Kind::AresCursor(_) => return None,
         })
     }
 
