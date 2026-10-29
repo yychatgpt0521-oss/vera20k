@@ -65,6 +65,7 @@ fn build_nuke(
         Some((16, 16)),
         false,
         pulse,
+        &mut SuperweaponRangePulse::default(),
         &colors,
         viewport,
         0,

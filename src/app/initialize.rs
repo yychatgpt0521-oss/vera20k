@@ -914,6 +914,7 @@ impl App {
                     electric_bolts: Default::default(),
                     radiation_beams: Default::default(),
                     superweapon_range_pulse: Default::default(),
+                    building_range_pulse: Default::default(),
                     detail: Default::default(),
                     hidden_super_anims: Default::default(),
                     super_timer_blinks: Default::default(),

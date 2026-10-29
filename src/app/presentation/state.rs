@@ -74,6 +74,9 @@ pub(crate) struct MatchPresentationState {
     /// replace map resources but keep this presentation owner alive.
     pub(crate) superweapon_range_pulse:
         crate::app::presentation::radial_indicators::SuperweaponRangePulse,
+    /// Tactical6DBF15's own placement-ring pulse (0x842950/0xB0E648).
+    pub(crate) building_range_pulse:
+        crate::app::presentation::radial_indicators::SuperweaponRangePulse,
     /// Native process-lived FPS counter and detail hysteresis, never sim state.
     pub(crate) detail: std::cell::RefCell<super::detail::DetailState>,
     /// The client's AnimClass `+0x19D` for Supers' ChronoPlacement anims

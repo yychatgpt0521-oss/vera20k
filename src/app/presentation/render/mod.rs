@@ -454,11 +454,9 @@ pub(crate) fn render_game(
         state.match_state.input.selection_order_pending,
     );
     let armed_super_weapon = state.armed_super_weapon_type().map(str::to_owned);
-    // Phobos's enhancer rings (`0x6DBEA3`) draw while a building is placed.
-    #[cfg(feature = "phobos")]
+    // A building being placed draws its own range ring (Tactical6DBE81) and,
+    // with Phobos, its enhancer rings (`0x6DBEA3`).
     let armed_building = state.armed_building_type().map(str::to_owned);
-    #[cfg(not(feature = "phobos"))]
-    let armed_building: Option<String> = None;
     let cursor_cell = (armed_super_weapon.is_some() || armed_building.is_some()).then(|| {
         crate::app::match_runtime::sim_tick::screen_point_to_world_cell(
             state,
@@ -495,6 +493,7 @@ pub(crate) fn render_game(
         cursor_cell,
         show_power_plant_enhancer_range,
         &mut match_presentation.superweapon_range_pulse,
+        &mut match_presentation.building_range_pulse,
         &match_presentation.house_color_map,
         viewport,
         times.radar_ms,

@@ -65,6 +65,7 @@ fn query(sim: &Simulation, rules: &RuleSet, ids: &[u64], ms: u64) -> Vec<RadialI
         None,
         false,
         &mut pulse,
+        &mut SuperweaponRangePulse::default(),
         &HouseColorMap::new(),
         SurfaceLineViewport {
             camera: [0; 2],
@@ -105,6 +106,7 @@ fn target_query(
         Some((16, 16)),
         false,
         pulse,
+        &mut SuperweaponRangePulse::default(),
         &colors,
         SurfaceLineViewport {
             camera: [0; 2],
@@ -516,6 +518,7 @@ fn targeting_a_missing_cell_cannot_change_the_simulation_dummy() {
             Some(cell),
             false,
             &mut SuperweaponRangePulse::default(),
+            &mut SuperweaponRangePulse::default(),
             &HouseColorMap::new(),
             SurfaceLineViewport {
                 camera: [0; 2],
@@ -740,6 +743,7 @@ fn placement_query(
         Some(cursor),
         show,
         &mut pulse,
+        &mut SuperweaponRangePulse::default(),
         &HouseColorMap::new(),
         SurfaceLineViewport {
             camera: [0; 2],
@@ -812,5 +816,56 @@ fn placement_enhancer_rings_need_membership_range_and_the_current_player() {
     assert_eq!(
         placement_query(&sim, &rules, "GAPOWR", (18, 16), true).len(),
         1
+    );
+}
+
+/// Tactical6DBE81..6DC1A7: placing a Building with a weapon draws its own
+/// range ring at the cursor cell even without `HasRadialIndicator=` (Mental
+/// Omega's Iron Guard), and the current player's nearest building of that
+/// type within twice the range draws its ring too; a farther one does not.
+#[test]
+fn placing_a_ranged_building_rings_it_and_its_nearest_twin() {
+    let ini = crate::sim::arena_fixture::clear_ground_ini(
+        "[Countries]\n0=Americans\n1=British\n[BuildingTypes]\n0=TOWER\n\
+         [TOWER]\nStrength=500\nPrimary=Gun\n[WeaponTypes]\n0=Gun\n\
+         [Gun]\nDamage=10\nRange=5\nWarhead=AP\n[Warheads]\n0=AP\n[AP]\n\
+         Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n",
+    );
+    let art = crate::rules::ini_parser::IniFile::from_str("[TOWER]\nFoundation=1x1\n");
+    let rules = RuleSet::from_ini_with_fixed_art_for_test(&ini, &art).unwrap();
+    let mut sim = state(&rules);
+    for cell in [(20, 16), (27, 27)] {
+        sim.spawn_object("TOWER", "Americans", cell.0, cell.1, 0, &rules)
+            .unwrap();
+    }
+    let mut placement_pulse = SuperweaponRangePulse::default();
+    let draws = build(
+        Some(&sim),
+        Some(&rules),
+        &[],
+        None,
+        Some("TOWER"),
+        Some((16, 16)),
+        false,
+        &mut SuperweaponRangePulse::default(),
+        &mut placement_pulse,
+        &HouseColorMap::new(),
+        SurfaceLineViewport {
+            camera: [0; 2],
+            clip: [0, 0, 1024, 768],
+            z_origin_y: 0,
+            zoom: 1.0,
+        },
+        0,
+    );
+    assert_eq!(draws.len(), 2, "placement ring, then the nearer tower's");
+    assert_eq!((draws[0].radius, draws[0].rays), (5.0, false));
+    assert_eq!((draws[1].radius, draws[1].rays), (5.0, true));
+    assert_eq!(
+        placement_pulse,
+        SuperweaponRangePulse {
+            phase: 10,
+            direction: 1
+        }
     );
 }
