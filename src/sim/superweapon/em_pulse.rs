@@ -10,7 +10,11 @@
 //!   of any `EMPulseCannon=yes` type when the list is empty, with a primary
 //!   weapon;
 //! - a cannon fires only within `SW.RangeMinimum=`/`SW.RangeMaximum=` of the
-//!   target (a negative bound uses its primary weapon's own range);
+//!   target (a negative bound uses its primary weapon's own range), except
+//!   that a self-targeting super skips the range test: the installed Ares.dll
+//!   activation (`0x100711C0`) passes `EMPulse.Linked || EMPulse.TargetSelf`
+//!   (SWTypeExt+0xBC/+0xBD, `0x10071200`) to the cannon check `0x1006DA20`,
+//!   which then returns after the launch-site test (`0x1006DA44`);
 //! - at most `SW.MaxCount=` fire, a negative count meaning all;
 //! - a self-targeting cannon does not actually fire: one bullet of its primary
 //!   weapon is placed on it and detonated once (Ares
@@ -102,7 +106,15 @@ fn firing_cannons(
             range_maximum_override: (maximum < 0.0)
                 .then(|| f64::from(weapon.range_leptons) / 256.0),
         };
-        if site.admits(target, (minimum, maximum)) {
+        // RESIDUAL: `EMPulse.Linked=` (the same skip once one cannon is in
+        // range) is not read; Mental Omega's self-targeting supers need only
+        // TargetSelf.
+        let admitted = if settings.target_self {
+            site.eligible
+        } else {
+            site.admits(target, (minimum, maximum))
+        };
+        if admitted {
             cannons.push(id);
         }
     }

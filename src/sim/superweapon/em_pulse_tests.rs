@@ -88,6 +88,36 @@ fn self_targeting_em_pulse_curtains_allies_through_its_cannon_warhead() {
     );
 }
 
+/// A self-targeting super skips the cannons' range test (Ares `0x10071200` ->
+/// `0x1006DA44`): an Iron Guard far beyond `SW.RangeMaximum=5` of the first
+/// one, the auto-fire target, still curtains its own neighbour.
+#[test]
+fn every_self_targeting_cannon_fires_whatever_its_distance_from_the_target() {
+    let (rules, mut sim, owner, [ally, ..]) = scene("");
+    sim.spawn_object_at_height("GUARD", "Americans", 26, 15, 0, 0, &rules)
+        .unwrap();
+    let far_ally = sim
+        .spawn_object_at_height("TANK", "Americans", 28, 15, 0, 0, &rules)
+        .unwrap();
+    crate::sim::house_strategy::update_strategy(
+        &mut sim,
+        &rules,
+        owner,
+        None,
+        FrameEffects::default(),
+    );
+    let frame = sim.session.binary_frame();
+    for id in [ally, far_ally] {
+        assert!(
+            is_invulnerable(
+                sim.entities().get(id).unwrap().invulnerability.as_ref(),
+                frame
+            ),
+            "{id}"
+        );
+    }
+}
+
 /// Ares `SW.ShowCameo=no` hides only an auto-firing super's cameo.
 #[test]
 fn show_cameo_no_hides_only_an_auto_firing_super() {
