@@ -181,6 +181,59 @@ impl TunnelRuntime {
         }
     }
 
+    /// `Z_Adjust @ 0x00729E50`, the locomotor term Foot GetZAdjustment
+    /// (`0x004DAFF0`) adds to the draw depth. `below_ground_px` is how many
+    /// screen rows the Location sits below the floor under it, `AdjustForZ(floor)
+    /// - AdjustForZ(z)` (the two `0x006D2140` projections at
+    /// `0x00729E86..0x00729EC2`). Digging, sinking, burrowed and rising
+    /// objects are pushed back by 45 (`[0x00844A98]`, `[0x00844A9C]`) plus that
+    /// depth, so the ground covers the part under it; the dig delay eases in
+    /// by its progress unless the hull faces between `0x46` and `0x8C`, and
+    /// the after-surfacing delay eases out. Idle, turning and abandoned
+    /// objects keep the base zero (`0x0055ABA0`).
+    pub fn z_adjust(&self, binary_frame: u32, facing: u16, below_ground_px: i32) -> i32 {
+        const DEPTH: i32 = 45;
+        let eased = |weight: crate::util::native_x87::MaskedX87Value| {
+            X::ftol_i32_low_masked(X::add(
+                X::mul(X::load_i32(DEPTH), weight),
+                X::load_i32(below_ground_px),
+            ))
+        };
+        match self.state {
+            TunnelState::Digging => {
+                // 0x00729F1C..0x00729F2A: the facing's 256-step direction.
+                let direction = ((u32::from(facing) >> 7) + 1) >> 1 & 0xFF;
+                if direction > 0x46 && direction < 0x8C {
+                    DEPTH.wrapping_add(below_ground_px)
+                } else {
+                    eased(self.native_delay_progress(binary_frame))
+                }
+            }
+            TunnelState::Sinking | TunnelState::Underground | TunnelState::Rising => {
+                DEPTH.wrapping_add(below_ground_px)
+            }
+            TunnelState::Surfaced => eased(X::sub(
+                X::load_f64(NativeF64Bits::ONE),
+                self.native_delay_progress(binary_frame),
+            )),
+            TunnelState::Idle | TunnelState::Turning | TunnelState::Abandoned => 0,
+        }
+    }
+
+    /// The delay's elapsed fraction as Z_Adjust evaluates it
+    /// (`0x00729EB7..0x00729F05`): `FILD; FIDIV` of `rate - left` by the rate,
+    /// exactly 1.0 for a zero rate.
+    fn native_delay_progress(&self, binary_frame: u32) -> crate::util::native_x87::MaskedX87Value {
+        if self.dig_rate == 0 {
+            return X::load_f64(NativeF64Bits::ONE);
+        }
+        let left = self.dig_timer.remaining(binary_frame as i32);
+        X::div(
+            X::load_i32(self.dig_rate.wrapping_sub(left)),
+            X::load_i32(self.dig_rate),
+        )
+    }
+
     /// The delay's elapsed fraction, `(rate - left) / rate` (1 for a zero
     /// rate), which Draw_Matrix reads (`0x00729C9C..0x00729D9C`).
     fn delay_progress(&self, binary_frame: u32) -> f64 {

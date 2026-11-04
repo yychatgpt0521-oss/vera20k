@@ -221,3 +221,19 @@ fn a_surfacing_driller_holds_its_cell_and_queues_the_order() {
     );
     assert_eq!(entity.navigation.nav_queue(), [NavTargetRef::cell(15, 27)]);
 }
+
+/// Z_Adjust (`0x00729E50`) pushes a rising object back by 45 plus its depth
+/// under the floor, so the ground covers the buried hull; an idle one keeps
+/// the base zero, and the after-surfacing delay eases back to the depth term.
+#[test]
+fn a_rising_tunnel_is_drawn_behind_the_ground_above_it() {
+    let mut runtime = TunnelRuntime::constructed(0);
+    assert_eq!(runtime.z_adjust(0, 0, 37), 0);
+    runtime.set_state_for_test(TunnelState::Rising);
+    assert_eq!(runtime.z_adjust(0, 0, 37), 82);
+    runtime.set_state_for_test(TunnelState::Surfaced);
+    runtime.start_delay(100, 16);
+    assert_eq!(runtime.z_adjust(100, 0, 0), 45);
+    assert_eq!(runtime.z_adjust(108, 0, 0), 22);
+    assert_eq!(runtime.z_adjust(116, 0, 0), 0);
+}
