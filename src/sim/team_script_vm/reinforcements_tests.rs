@@ -2253,3 +2253,69 @@ fn full_harvester_reinforcement_fills_its_hold_with_slot_zero_before_placement()
         "fill is not payment"
     );
 }
+
+/// 65E010's Tunnel arm (`0x0065E2D3`): a team of Tunnel units arrives under
+/// its cell at -256, burrowed and off the cell, and digs out there instead
+/// of appearing on the surface.
+#[test]
+fn a_tunnel_team_arrives_underground_and_digs_out_at_its_cell() {
+    use crate::sim::movement::tunnel_movement::{TUNNEL_DEPTH, TunnelState};
+    let (mut sim, rules, registry) = crate::sim::world::entry_test_fixture::fixture_with_rules(
+        "[VehicleTypes]
+0=DRIL
+[DRIL]
+Strength=240
+Speed=4
+ROT=4
+         SpeedType=Track
+MovementZone=Subterannean
+         Locomotor={4A582743-9839-11d1-B709-00A024DDAFD1}
+",
+    );
+    let member = sim
+        .construct_object_limbo_at_height(
+            "DRIL",
+            "Americans",
+            0,
+            0,
+            0,
+            0,
+            &rules,
+            FrameEffects::default(),
+        )
+        .unwrap();
+    let owner = sim.interner.intern("Americans");
+    assert!(sim.place_reinforcement_members(
+        &[member],
+        owner,
+        (15, 15),
+        false,
+        &rules,
+        Some(&registry),
+        FrameEffects::default(),
+    ));
+    let state = |sim: &Simulation| {
+        sim.entities()
+            .get(member)
+            .and_then(|actor| actor.locomotor.as_ref()?.tunnel_runtime())
+            .map(|runtime| runtime.state())
+    };
+    let actor = sim.entities().get(member).unwrap();
+    assert_eq!(state(&sim), Some(TunnelState::Underground));
+    assert_eq!(position_world_coord(&actor.position).z, TUNNEL_DEPTH);
+    assert!(!actor.lifecycle.in_limbo() && !actor.lifecycle.cell_marked());
+    let grid = sim.path_grid.clone();
+    let mut rose = false;
+    for _ in 0..300 {
+        sim.advance_tick(&[], Some(&rules), grid.as_deref(), Some(&registry), 67);
+        rose |= state(&sim) == Some(TunnelState::Rising);
+        if state(&sim) == Some(TunnelState::Idle) {
+            break;
+        }
+    }
+    let actor = sim.entities().get(member).unwrap();
+    assert!(rose, "it digs out rather than appearing");
+    assert_eq!(state(&sim), Some(TunnelState::Idle));
+    assert!(actor.lifecycle.cell_marked());
+    assert_eq!(position_world_coord(&actor.position).z, 0);
+}
