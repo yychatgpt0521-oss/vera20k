@@ -221,7 +221,7 @@ impl Simulation {
     ///   VERA keeps no link.
     /// - The active class picks the one Process: the ground corridor for
     ///   Drive, Ship and Walk, the air pass for Fly and Jumpjet, and Hover's,
-    ///   Teleport's and Rocket's own.
+    ///   Teleport's, Rocket's and Tunnel's own.
     pub(crate) fn process_active_locomotor(
         &mut self,
         stable_id: u64,
@@ -260,6 +260,16 @@ impl Simulation {
             LocomotorKind::Teleport => self.process_teleport_locomotor(stable_id, rules, ctx),
             LocomotorKind::Rocket => {
                 Ok(self.process_rocket_locomotor(stable_id, rules, overlay_registry, ctx.effects))
+            }
+            LocomotorKind::Tunnel => {
+                self.complete_pending_order(stable_id, rules, overlay_registry, ctx.effects);
+                self.process_tunnel(stable_id, rules, overlay_registry, ctx.effects)
+                    .map(|tunnel| LocomotorProcess {
+                        admitted: true,
+                        bridge_state_changed: tunnel.bridge_state_changed,
+                        per_cell_ran: tunnel.per_cell_ran,
+                        ..LocomotorProcess::default()
+                    })
             }
         }
     }

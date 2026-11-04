@@ -556,18 +556,19 @@ fn mission_factory_unload(
                     .map(|loco| loco.active_kind());
                 //44DED8..44DF1A dispatch on the active locomotor's CLSID.
                 //44DF72..44DFA4: a Drive product runs track 0x42 out of the
-                //bay. 44DFAD..44E163: a Teleport one (the Chrono Miner; no
-                //retail type names TS Tunnel, 44DEEA's other arm) first takes
-                //a Drive piggyback over its Teleport, the Unit setter's own
-                //install, then runs the same track. Native ends a carried
+                //bay. 44DFAD..44E163: a Tunnel (44DEEA) or Teleport (44DF02,
+                //the Chrono Miner) one first takes a Drive piggyback over it,
+                //the Unit setter's own install, then runs the same track. Native ends a carried
                 //piggyback when Is_Piggybacking (IPiggyback vt+0x1C) holds,
                 //where the shared install asks Is_Ok_To_End; a product fresh
                 //from the factory carries none. The no-IPiggyback C4 arm
                 //(44E165) is dead: Drive implements it.
-                if active == Some(LocomotorKind::Teleport)
-                    && let Some(unit) = sim.substrate.entities.get_mut(product)
+                if matches!(
+                    active,
+                    Some(LocomotorKind::Teleport | LocomotorKind::Tunnel)
+                ) && let Some(unit) = sim.substrate.entities.get_mut(product)
                 {
-                    crate::sim::movement::locomotor_owner::begin_drive_for_teleporter(unit, now);
+                    crate::sim::movement::locomotor_owner::begin_drive_piggyback(unit, now);
                 }
                 let drive = sim
                     .substrate

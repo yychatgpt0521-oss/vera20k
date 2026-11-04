@@ -1183,9 +1183,10 @@ impl Simulation {
     /// FNPC 0x56DC20 as `Find_Path` calls it (0x4D3B0A..0x4D3B76 and
     /// 0x4D3D6C..0x4D3DD8): seed = target cell, Type+67C speed, zone =
     /// GetZoneID(current cell, table row, OnBridge), the table row, OnBridge,
-    /// footprint 1x1, height check on, occupancy check = the Subterranean
-    /// obstacle flag (Type+D2C, never set for stock infantry), bridge cells
-    /// allowed, nearest to the actor's current cell.
+    /// footprint 1x1, height check on, bridge cells allowed, nearest to the
+    /// actor's current cell. Arg11 requires the burrow test for a
+    /// `MovementZone=Subterranean` type (Type+D2C, `0x0071608A`) whose target
+    /// cell passes it (`0x004D3AD0..0x004D3AFC`, `0x004D3D32..0x004D3D5E`).
     fn find_path_nearby_cell(
         &self,
         id: u64,
@@ -1200,11 +1201,8 @@ impl Simulation {
         let object = self
             .object_type(actor.type_ref(), rules)
             .ok_or("Find_Path FNPC requires the mover type")?;
-        if object.movement_zone == MovementZone::Subterranean {
-            return Err(
-                "Find_Path FNPC obstacle flag (Type+D2C, 0x486FF0) is not represented".into(),
-            );
-        }
+        let require_burrowable =
+            object.movement_zone == MovementZone::Subterranean && self.cell_burrowable(target);
         let zone = find_path_search_zone(object.movement_zone)
             .ok_or("Find_Path FNPC requires a valid MovementZone")?;
         let terrain = self
@@ -1231,6 +1229,10 @@ impl Simulation {
                 NearbyArgs {
                     check_height: true,
                     target_cell: Some(current),
+                    options: crate::sim::find_nearby_cell::NearbySearchOptions {
+                        require_burrowable,
+                        ..Default::default()
+                    },
                     ..NearbyArgs::plain(
                         PassabilityArgs {
                             speed_type: object.speed_type,

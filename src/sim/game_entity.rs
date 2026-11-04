@@ -1156,6 +1156,16 @@ impl GameEntity {
         invisible: bool,
         query: crate::sim::cloak_disguise::VisualCharacterQuery,
     ) -> u8 {
+        // Foot `0x004DA4E0` asks its locomotor first (`+0x34`), whose
+        // nonzero answer wins; only a burrowed Tunnel's (`0x007291D0`) is.
+        if let Some(visual) = self
+            .locomotor
+            .as_ref()
+            .and_then(|locomotor| locomotor.tunnel_runtime())
+            .and_then(|tunnel| tunnel.visual_character(query.sensor_call()))
+        {
+            return visual;
+        }
         let (state, progress) = self
             .cloak
             .as_ref()

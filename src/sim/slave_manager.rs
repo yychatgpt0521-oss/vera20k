@@ -1178,6 +1178,7 @@ impl Simulation {
                 target_cell: Some(search.target),
                 options: NearbySearchOptions {
                     reject_any_overlay: search.reject_any_overlay,
+                    require_burrowable: false,
                 },
             },
         )?;

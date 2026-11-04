@@ -28,17 +28,28 @@ use crate::sim::game_entity::GameEntity;
 /// The Teleporter arm is skipped while a Magnetron holds the object
 /// (`0x007423E1..0x00742405`), so the END here is never a lift's.
 ///
+/// The Unit setter's Tunnel arm (`0x007429D4..0x00742C06`) runs the same
+/// install over an idle Tunnel that will not dig
+/// ([`Simulation::unit_tunnel_arm`]). Tunnel has no IPiggyback, so its END
+/// query (`0x00742A49`) never ends anything.
+///
 /// `BuildingClass::Mission_Unload` state 2 (`0x0044DFAD..0x0044E163`) runs the
-/// same install for a product whose active locomotor is Teleport, before its
-/// bay track. Its END asks only Is_Piggybacking (IPiggyback vt+0x1C,
-/// `0x0044DFE1`), where the setter also asks Is_Ok_To_End (vt+0x14,
-/// `0x0074264E`); a product fresh from ExitObject carries no piggyback, so
-/// both skip it. An active Teleport is never a lift's Jumpjet.
-pub(crate) fn begin_drive_for_teleporter(entity: &mut GameEntity, binary_frame: u32) -> bool {
+/// same install for a product whose active locomotor is Teleport or Tunnel
+/// (the CLSID tests at `0x0044DEE8` and `0x0044DF02`), before its bay track.
+/// Its END asks only Is_Piggybacking (IPiggyback vt+0x1C, `0x0044DFE1`),
+/// where the setter also asks Is_Ok_To_End (vt+0x14, `0x0074264E`); a
+/// product fresh from ExitObject carries no piggyback, so both skip it. An
+/// active Teleport is never a lift's Jumpjet.
+///
+/// [`Simulation::unit_tunnel_arm`]: crate::sim::world::Simulation::unit_tunnel_arm
+pub(crate) fn begin_drive_piggyback(entity: &mut GameEntity, binary_frame: u32) -> bool {
     let Some(locomotor) = entity.locomotor.as_ref() else {
         return false;
     };
-    if locomotor.effective_kind() != LocomotorKind::Teleport {
+    if !matches!(
+        locomotor.effective_kind(),
+        LocomotorKind::Teleport | LocomotorKind::Tunnel
+    ) {
         return false;
     }
     if locomotor.active_kind() == LocomotorKind::Drive {

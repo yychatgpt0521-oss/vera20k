@@ -573,7 +573,7 @@ fn fresh_begin_owns_native_slope_frame_without_eager_retained_allocation() {
         let mut scene = prepare(row);
         let frame = u32::try_from(native["frame"].as_u64().unwrap()).unwrap();
         let entity = scene.sim.substrate.entities.get_mut(scene.miner).unwrap();
-        assert!(locomotor_owner::begin_drive_for_teleporter(entity, frame));
+        assert!(locomotor_owner::begin_drive_piggyback(entity, frame));
         let loco = entity.locomotor.as_ref().unwrap();
         assert!(loco.selected_drive_runtime().unwrap().retained().is_none());
         assert_drive(

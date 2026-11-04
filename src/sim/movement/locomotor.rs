@@ -202,7 +202,8 @@ impl LocomotorState {
             | LocomotorKind::Walk
             | LocomotorKind::Hover
             | LocomotorKind::Ship
-            | LocomotorKind::Teleport => MovementLayer::Ground,
+            | LocomotorKind::Teleport
+            | LocomotorKind::Tunnel => MovementLayer::Ground,
             LocomotorKind::Fly | LocomotorKind::Jumpjet | LocomotorKind::Rocket => {
                 MovementLayer::Air
             }
@@ -402,6 +403,23 @@ impl LocomotorState {
     ) -> Option<&mut super::teleport_movement::TeleportRuntime> {
         match (self.kind, &mut self.runtime_payload) {
             (LocomotorKind::Teleport, LocomotorRuntimePayload::Teleport(runtime)) => Some(runtime),
+            _ => None,
+        }
+    }
+
+    /// The active Tunnel object's state.
+    pub fn tunnel_runtime(&self) -> Option<&super::tunnel_movement::TunnelRuntime> {
+        match (self.kind, &self.runtime_payload) {
+            (LocomotorKind::Tunnel, LocomotorRuntimePayload::Tunnel(runtime)) => Some(runtime),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn tunnel_runtime_mut(
+        &mut self,
+    ) -> Option<&mut super::tunnel_movement::TunnelRuntime> {
+        match (self.kind, &mut self.runtime_payload) {
+            (LocomotorKind::Tunnel, LocomotorRuntimePayload::Tunnel(runtime)) => Some(runtime),
             _ => None,
         }
     }

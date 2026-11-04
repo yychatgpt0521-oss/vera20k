@@ -254,6 +254,9 @@ const POINTERS: &[(&str, PublishPointer)] = &[
     // MoveFlash +BB4 (`0x006665CF`, `0x0066E534..0x0066E55B`) and Parachute
     // +BBC (`0x006665E3`, `0x0066E572..0x0066E599`).
     ("MoveFlash", |rules, id| rules.general.move_flash = anim(id)),
+    // `[AudioVisual] Dig=` +294 (constructor `0x00665A10`, read
+    // `0x0066A587..0x0066A5B1`), the Tunnel locomotor's dig animation.
+    ("Dig", |rules, id| rules.general.dig = anim(id)),
     ("Parachute", |rules, id| {
         rules.general.parachute_shp = named(id).map(|id| id.to_ascii_uppercase());
     }),

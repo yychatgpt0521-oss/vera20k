@@ -61,7 +61,7 @@
 //! RESIDUALS:
 //! - A destination given while warping in (states 2 to 7, the latch down)
 //!   runs the Unit setter's Teleporter arm, whose Drive suspends the warp's
-//!   Teleport (`locomotor_owner::begin_drive_for_teleporter`), refuses the
+//!   Teleport (`locomotor_owner::begin_drive_piggyback`), refuses the
 //!   destination while its owner warps (`0x004AFD40`) and ends at the Foot
 //!   AI tail. The NavCom it published stays, so state 5's NULL destination,
 //!   which the prologue runs, installs another Drive: FootClass::AI's

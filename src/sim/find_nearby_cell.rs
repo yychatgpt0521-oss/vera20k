@@ -174,6 +174,14 @@ impl NearbyFootprint {
 pub struct NearbySearchOptions {
     /// Reject any candidate cell that carries an overlay (ore, gems, walls).
     pub reject_any_overlay: bool,
+    /// FNPC arg11 (`0x0056DE52..0x0056DE66` and its footprint twins): reject
+    /// a candidate the cell's burrow test (`0x00486FF0`,
+    /// [`cell_allows_burrowing`]) refuses. The Tunnel locomotor's surface
+    /// searches set it, and `Find_Path` for a `Subterranean` type whose
+    /// destination allows burrowing.
+    ///
+    /// [`cell_allows_burrowing`]: crate::sim::movement::tunnel_movement::cell_allows_burrowing
+    pub require_burrowable: bool,
 }
 
 /// FNPC query — mirrors the engine `Find_Nearby_Passable_Cell` caller args.
@@ -612,6 +620,12 @@ fn candidate_passes(
         return false;
     }
 
+    //56DE52 arg11: the burrow test, between the height gate and the bridge
+    // filter.
+    if options.require_burrowable && !candidate_allows_burrowing(q, cx, cy) {
+        return false;
+    }
+
     //56DE6C bridge filter follows height; final occupancy56DE9D is last.
     if !q.allow_bridge_cells && candidate_is_bridge_cell(q, cx, cy) {
         return false;
@@ -690,6 +704,29 @@ fn cell_level(q: &NearbyQuery<'_>, cx: i32, cy: i32) -> i16 {
         .unwrap_or(0)
 }
 
+/// The burrow test of a candidate (`0x00486FF0`) on its retained Cell. A
+/// terrain-less fixture has no cell to refuse.
+fn candidate_allows_burrowing(q: &NearbyQuery<'_>, cx: i32, cy: i32) -> bool {
+    let Some(terrain) = q.resolved_terrain else {
+        return true;
+    };
+    let canonical;
+    let cells = match q.native_cells {
+        Some(cells) => cells,
+        None => {
+            canonical = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain);
+            &canonical
+        }
+    };
+    let cell = cells.lookup((cx as i16, cy as i16));
+    crate::sim::movement::tunnel_movement::cell_allows_burrowing(
+        cells,
+        cell,
+        q.playfield_bounds,
+        q.occupancy,
+    )
+}
+
 /// Read the retained real/dummy structural bit; do not merge a stale PathGrid.
 fn candidate_is_bridge_cell(q: &NearbyQuery<'_>, cx: i32, cy: i32) -> bool {
     if let Some(terrain) = q.resolved_terrain {
@@ -749,6 +786,7 @@ impl NearbyArgs {
             target_cell: None,
             options: NearbySearchOptions {
                 reject_any_overlay: false,
+                require_burrowable: false,
             },
         }
     }
@@ -1685,6 +1723,7 @@ mod tests {
         );
         let rejecting = NearbySearchOptions {
             reject_any_overlay: true,
+            require_burrowable: false,
         };
         let found = find_nearby_passable_cell_with_options((2, 2), &q, rejecting, 0)
             .expect("clear ground exists on the next ring");

@@ -82,7 +82,7 @@ fn supply_drive_state(entity: &mut GameEntity) {
 }
 
 fn activate_drive(entity: &mut GameEntity) {
-    assert!(begin_drive_for_teleporter(entity, 19));
+    assert!(begin_drive_piggyback(entity, 19));
     supply_drive_state(entity);
 }
 
@@ -270,7 +270,7 @@ fn reusing_active_drive_keeps_complete_instance_including_forced_track() {
     let entity = sim.substrate.entities.get_mut(1).unwrap();
     let before = owned_state(entity);
 
-    assert!(begin_drive_for_teleporter(entity, 900));
+    assert!(begin_drive_piggyback(entity, 900));
     assert_eq!(owned_state(entity), before);
 }
 
@@ -308,7 +308,7 @@ fn teleporter_drive_ends_what_may_end_and_begins_over_the_rest() {
         }
         let warp_teleport = entity.locomotor.clone();
 
-        assert!(begin_drive_for_teleporter(entity, 21));
+        assert!(begin_drive_piggyback(entity, 21));
         let locomotor = entity.locomotor.as_ref().unwrap();
         if mid_warp {
             assert_eq!(chain(entity), [Drive, Teleport, Drive, Teleport]);
@@ -337,7 +337,7 @@ fn refused_installation_and_absent_stash_preserve_instance_and_foot_state() {
         }
         let before = owned_state(entity);
 
-        assert!(!begin_drive_for_teleporter(entity, 37));
+        assert!(!begin_drive_piggyback(entity, 37));
         assert!(!sim.try_end_piggyback(1, crate::rules::ruleset::RuleSet::empty_for_test()));
         assert!(!sim.end_admitted_piggyback(1, crate::rules::ruleset::RuleSet::empty_for_test()));
         assert_eq!(owned_state(sim.substrate.entities.get(1).unwrap()), before);
@@ -453,10 +453,10 @@ fn foot_queue_survives_drive_retirement_construction_and_reuse() {
     assert_retired(entity);
     assert_eq!(entity.navigation.path_replay().clone(), queue);
     assert_eq!(entity.foot_speed, speed);
-    assert!(begin_drive_for_teleporter(entity, 51));
+    assert!(begin_drive_piggyback(entity, 51));
     assert_eq!(entity.navigation.path_replay().clone(), queue);
     assert_eq!(entity.foot_speed, speed);
-    assert!(begin_drive_for_teleporter(entity, 52));
+    assert!(begin_drive_piggyback(entity, 52));
     assert_eq!(entity.navigation.path_replay().clone(), queue);
     assert_eq!(entity.foot_speed, speed);
 }
@@ -554,7 +554,7 @@ fn foot_speed_ownership_matches_original_helper_witnesses() {
             owner_speed.set_speed_fraction_native_bits(step.set_fraction.unwrap().bits());
             assert_eq!(owner_speed.native_applied_fraction(), expected);
             entity.foot_speed = owner_speed.clone();
-            assert!(begin_drive_for_teleporter(entity, 3));
+            assert!(begin_drive_piggyback(entity, 3));
             super::super::navcom::set_destination_internal_cell(entity, (12, 8), None, 0);
             assert_eq!(entity.foot_speed, owner_speed);
             assert_eq!(

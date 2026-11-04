@@ -173,7 +173,7 @@ fn unit_checks_active_locomotor_and_body_rotation_not_stashed_slot_or_turret() {
     let mut actor = with_mission(&actor, MissionType::Move);
     actor.locomotor = Some(LocomotorState::for_test_kind(LocomotorKind::Teleport));
     assert!(!unit_scatter_admitted(&actor, flags, &rules, 100));
-    assert!(crate::sim::movement::locomotor_owner::begin_drive_for_teleporter(&mut actor, 100));
+    assert!(crate::sim::movement::locomotor_owner::begin_drive_piggyback(&mut actor, 100));
     actor.turret_rotation_latch.set_for_test(true);
     actor
         .navigation

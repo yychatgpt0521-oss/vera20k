@@ -893,6 +893,18 @@ impl ResolvedTerrainGrid {
         }
     }
 
+    /// The burrow test's tile read (`0x0048700A..0x0048702A`): the
+    /// `AllowBurrowing=` of the IsometricTileType CellClass+38 names. An index
+    /// outside the active registry, the shared Dummy's 0xFFFF included, skips
+    /// the test and answers true.
+    pub(crate) fn native_cell_tile_allows_burrowing(&self, cell: NativeCellIdentity) -> bool {
+        usize::try_from(self.native_cell_tile_index(cell))
+            .ok()
+            .and_then(|tile| self.tile_allows_burrowing.get(tile))
+            .copied()
+            .unwrap_or(true)
+    }
+
     /// Read retained CellClass+11A, the iso sub-tile. Constructor 47BBF0
     /// gives the shared fallback 0; live dummy tile replacement is not
     /// modeled, so no malformed-map parity is claimed.

@@ -700,6 +700,9 @@ pub struct ResolvedTerrainGrid {
     /// Active theater tile registry length. Positive out-of-range ids present
     /// as ClearTile while their stored semantic id remains untouched.
     tile_registry_len: Option<usize>,
+    /// Active theater IsometricTileTypeClass+0x305 (`AllowBurrowing=`) by tile
+    /// id, the registry the burrow test indexes; empty without a theater.
+    tile_allows_burrowing: Vec<bool>,
     /// Smudge CanPlace's Morphable read of the shared dummy's constructor
     /// tile 0xFFFF, derived once from the active theater registry: every
     /// index below 0 or at least the count reads theater tile 0. False
@@ -1002,6 +1005,7 @@ impl ResolvedTerrainGrid {
             clear_tile_id: 0,
             water_tiles: crate::map::rmg::tiles::TileIds::from_keys(&Default::default()),
             tile_registry_len: None,
+            tile_allows_burrowing: Vec::new(),
             dummy_accepts_smudge: false,
             bridge_set_start: None,
             high_bridge_rim_tiles: None,

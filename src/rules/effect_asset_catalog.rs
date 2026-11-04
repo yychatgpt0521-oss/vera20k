@@ -390,6 +390,9 @@ pub fn anim_class_roots(rules: &RuleSet) -> Vec<String> {
     // `[General] WarpOut=`: the teleport locomotor constructs it at both ends
     // of a relocation (`sim::movement::teleport_movement`).
     insert(&rules.general.warp_out.name);
+    // `[AudioVisual] Dig=`: the Tunnel locomotor constructs it as a unit digs
+    // in and as it surfaces (`sim::movement::tunnel_movement`).
+    insert(&rules.general.dig.name);
     // TemporalClass::Update71A8FA..71A909 constructs WarpAway at the erased
     // target's Location. The frozen leaf AI constructs ChronoSparkle1 every
     // 24 frames (Unit73622F, Infantry51BAF6..51BB69, Building4403D4).

@@ -962,7 +962,9 @@ impl crate::sim::world::Simulation {
     ///   ([`teleport_stop_moving`](super::teleport_movement::teleport_stop_moving));
     /// - Fly `0x004CCFD0` (`Simulation::fly_stop_moving`), which re-targets a
     ///   moving aircraft through its own class setter;
-    /// - Rocket `0x006633C0`, an empty body (`RET 4`).
+    /// - Rocket `0x006633C0`, an empty body (`RET 4`);
+    /// - Tunnel `0x00728C00` (`Simulation::tunnel_stop_moving`), which
+    ///   surfaces a burrowed owner at the burrowable cell nearest it.
     ///
     /// The Jumpjet's needs the map and, for a failed search, the rules; the
     /// Fly's needs the rules. A world without them leaves the owner as it
@@ -997,6 +999,7 @@ impl crate::sim::world::Simulation {
                 }
             }
             LocomotorKind::Rocket => {}
+            LocomotorKind::Tunnel => self.tunnel_stop_moving(id, rules, registry, frame_effects),
         }
         Ok(())
     }

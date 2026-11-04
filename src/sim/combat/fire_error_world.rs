@@ -6,8 +6,6 @@
 //! owning row in `fire_error.rs`):
 //! - `deploy_cell_ok` answers true: `CellClass 0x00487C10` is not ported, and
 //!   only U4's dormant DeployToFire reads it.
-//! - `locomotor_can_fire` answers OK: only the Tunnel locomotor, unused in
-//!   retail, refuses.
 
 use super::fire_error::{
     CellFacts, FireError, FireFacts, FireQuery, FireTargetKind, FirerCell, FirerClass, FirerFacts,
@@ -881,8 +879,21 @@ impl FireQuery for WorldQuery<'_, '_> {
         })
     }
 
+    /// Every class keeps the base Can_Fire (`0x0055AD00`, OK) but Tunnel's
+    /// (`0x0072A1C0`), which answers Moving in any state but idle.
     fn locomotor_can_fire(&mut self) -> FireError {
-        FireError::Ok
+        let digging = self
+            .subject
+            .firer
+            .locomotor
+            .as_ref()
+            .and_then(|locomotor| locomotor.tunnel_runtime())
+            .is_some_and(crate::sim::movement::tunnel_movement::TunnelRuntime::refuses_fire);
+        if digging {
+            FireError::Moving
+        } else {
+            FireError::Ok
+        }
     }
 
     fn jumpjet_locomotor(&mut self) -> bool {

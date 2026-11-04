@@ -195,7 +195,7 @@ pub(super) fn dress_cmin(s: &mut Scene, input: &Value) {
     let terrain = s.sim.resolved_terrain.clone();
     let entity = s.sim.substrate.entities.get_mut(s.miner).unwrap();
     if input["loco"] == "drive_piggy" {
-        assert!(crate::sim::movement::locomotor_owner::begin_drive_for_teleporter(entity, frame));
+        assert!(crate::sim::movement::locomotor_owner::begin_drive_piggyback(entity, frame));
         if input["moving"] == true {
             let current = crate::sim::movement::ground_pose::position_world_coord(&entity.position);
             let drive = entity.locomotor.as_mut().unwrap();

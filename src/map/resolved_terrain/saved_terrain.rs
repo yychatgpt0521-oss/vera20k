@@ -283,6 +283,7 @@ impl SavedTerrainTemplate {
             clear_tile_id: 0,
             water_tiles: crate::map::rmg::tiles::TileIds::from_keys(&Default::default()),
             tile_registry_len: None,
+            tile_allows_burrowing: Vec::new(),
             dummy_accepts_smudge: false,
             bridge_set_start: None,
             high_bridge_rim_tiles: None,
@@ -392,6 +393,11 @@ impl ResolvedTerrainGrid {
             crate::map::rmg::tiles::TileIds::resolve,
         );
         self.tile_registry_len = theater.map(|td| td.lookup.len());
+        self.tile_allows_burrowing = theater.map_or_else(Vec::new, |td| {
+            (0..td.lookup.len())
+                .map(|id| td.lookup.allows_burrowing(id as u16))
+                .collect()
+        });
         self.dummy_accepts_smudge =
             theater.is_some_and(|td| current_tile_permissions(&td.lookup, 0xffff).0);
         self.high_bridge_rim_tiles = theater.map(|td| td.high_bridge_rim_tiles);

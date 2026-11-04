@@ -95,6 +95,17 @@ fn teleport_unit(entity: &GameEntity) -> bool {
             .is_some_and(|loco| loco.active_kind() == LocomotorKind::Teleport)
 }
 
+/// A Unit on a Tunnel locomotor (`sim::movement::tunnel_movement`): the Unit
+/// setter runs its Tunnel arm (`0x007427C0`) and its Foot tail reaches Tunnel
+/// Move_To (`0x00728AF0`).
+fn tunnel_unit(entity: &GameEntity) -> bool {
+    entity.category() == EntityCategory::Unit
+        && entity
+            .locomotor
+            .as_ref()
+            .is_some_and(|loco| loco.active_kind() == LocomotorKind::Tunnel)
+}
+
 /// A Unit on a Jumpjet locomotor: its null destination reaches the Jumpjet's
 /// `Stop_Moving` through the same Unit setter. The Foot tail then calls
 /// `JumpjetLocomotionClass::Move_To` (`0x0054B1C0`) or `Stop_Moving` (`0x0054B4D0`).
@@ -740,8 +751,8 @@ impl Simulation {
 
     /// Whether the Unit setter (`0x741970`) is represented for `id` as the
     /// team, harvest and undeploy callers use it: a Drive, Ship, Hover, Walk,
-    /// Jumpjet or Teleport receiver, or a `Teleporter=` Unit whatever its
-    /// locomotor.
+    /// Jumpjet, Teleport or Tunnel receiver, or a `Teleporter=` Unit whatever
+    /// its locomotor.
     pub(crate) fn unit_setter_receiver(&self, id: u64, rules: &RuleSet) -> bool {
         self.substrate.entities.get(id).is_some_and(|actor| {
             track_unit(actor)
@@ -749,6 +760,7 @@ impl Simulation {
                 || walk_unit(actor)
                 || jumpjet_unit(actor)
                 || teleport_unit(actor)
+                || tunnel_unit(actor)
                 || teleporter_unit(self, actor, rules)
         })
     }
@@ -803,7 +815,8 @@ impl Simulation {
             || hover
             || jumpjet
             || walk_unit(actor)
-            || teleport_unit(actor))
+            || teleport_unit(actor)
+            || tunnel_unit(actor))
             || !super::can_accept_destination(actor)
         {
             return false;
@@ -1153,6 +1166,20 @@ impl Simulation {
             _ => None,
         };
         let skip_move_to = teleporter && self.unit_teleporter_arm(id, requested_cell, rules);
+        // 0x007427C0: the Tunnel arm follows the Teleporter arm's, on the
+        // destination's GetCoords (vt+0x48 at 0x007428B0).
+        let requested_coords = self.resolved_terrain.as_ref().and_then(|terrain| {
+            super::ground_pose::target_get_coords(
+                requested.into(),
+                self,
+                Some(&crate::map::resolved_terrain::NativeCellQuery::canonical(
+                    terrain,
+                )),
+            )
+        });
+        if let Some(coords) = requested_coords {
+            self.unit_tunnel_arm(id, coords, rules);
+        }
         // UnitClass::Set_Destination 0x00741970: successful UnitRepair/Bunker
         // docking jumps from 0x00742C8E/0x00742D08 to Foot's setter at
         // 0x00742D09 and returns before the WeaponsFactory arm (0x00742D46).
@@ -1241,6 +1268,18 @@ impl Simulation {
                         actor, requested, coord, terrain, frame,
                     );
                     true
+                }
+                Some(LocomotorKind::Tunnel) => {
+                    // Foot 0x004D9510 publishes, then Move_To 0x004D965D.
+                    super::navcom::publish_nav_com(actor, requested);
+                    let coord = coord.expect("accepted Move_To captures target +4C");
+                    self.tunnel_move_to(
+                        id,
+                        coord,
+                        rules,
+                        frame_effects.overlay_registry(),
+                        frame_effects,
+                    )
                 }
                 Some(LocomotorKind::Teleport) => {
                     super::navcom::publish_nav_com(actor, requested);
@@ -1457,7 +1496,7 @@ impl Simulation {
     /// is the refinery's MOVE_HERE to its pad. Every other destination, NULL
     /// included, drives: a Drive piggybacks over whatever is active, after an
     /// active piggyback that may end has ended
-    /// ([`locomotor_owner::begin_drive_for_teleporter`](super::locomotor_owner::begin_drive_for_teleporter),
+    /// ([`locomotor_owner::begin_drive_piggyback`](super::locomotor_owner::begin_drive_piggyback),
     /// `0x007425E6..0x0074277E`).
     ///
     /// Back to Teleport, a Drive piggyback ends when `Is_Ok_To_End` allows it
@@ -1552,7 +1591,7 @@ impl Simulation {
         if active != LocomotorKind::Drive
             && let Some(actor) = self.substrate.entities.get_mut(id)
         {
-            super::locomotor_owner::begin_drive_for_teleporter(actor, frame);
+            super::locomotor_owner::begin_drive_piggyback(actor, frame);
         }
         false
     }

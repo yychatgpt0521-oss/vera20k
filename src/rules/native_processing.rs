@@ -8192,7 +8192,9 @@ impl RulesPassProcessor {
             section.read_color_rgb("ChronoBeamColor", self.rules_chrono_beam_color, None);
         self.rules_color_add_selectors.read_pass(section);
         for key in ["DropPodPuff", "VeinAttack", "Dig", "AtmosphereEntry"] {
-            let _ = self.resolve_scalar_from(section, key, RulesTypeFamily::Animation, 0x80);
+            let anim = self.resolve_scalar_from(section, key, RulesTypeFamily::Animation, 0x80);
+            // Only `Dig` (+294, the Tunnel locomotor's) has a ported reader.
+            self.rules_type_references.read_pointer(key, anim);
         }
         for key in ["TreeFire", "OnFire"] {
             self.allocate_list_from(section, key, RulesTypeFamily::Animation, 0x80);

@@ -138,6 +138,7 @@ pub mod rocket_movement;
 mod teleport_chrono;
 pub mod teleport_movement;
 pub mod tube_movement;
+pub mod tunnel_movement;
 pub mod turret;
 
 pub use facing_class::FacingClass;

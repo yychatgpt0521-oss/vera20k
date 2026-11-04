@@ -27,8 +27,9 @@ pub(crate) fn is_powered(
 
 /// ILocomotion+14 Destination, distinct from Head_To(+18) and the Foot's
 /// NavCom. Original retail gamemd.exe: Drive4AFC90, Ship69F3A0,
-/// Walk75ABA0, Hover514CB0, Fly4CCAE0, Jumpjet54AE60, Rocket661FB0 and
-/// Teleport7180A0. No state, map query, RNG or timers are changed.
+/// Walk75ABA0, Hover514CB0, Fly4CCAE0, Jumpjet54AE60, Rocket661FB0,
+/// Teleport7180A0 and Tunnel728A90. No state, map query, RNG or timers are
+/// changed.
 pub(crate) fn destination(entity: &GameEntity) -> Option<crate::sim::components::DriveCoord> {
     use crate::sim::components::DriveCoord;
     let null = DriveCoord { x: 0, y: 0, z: 0 };
@@ -38,8 +39,8 @@ pub(crate) fn destination(entity: &GameEntity) -> Option<crate::sim::components:
         LocomotorKind::Ship => loco.track_destination(TrackFamily::Ship).unwrap_or(null),
         LocomotorKind::Hover => loco.hover_runtime()?.destination().unwrap_or(null),
         LocomotorKind::Rocket => loco.rocket_runtime()?.destination(),
-        LocomotorKind::Teleport if !is_moving(entity)? => {
-            //7180CC returns the linked object's Location when stopped.
+        LocomotorKind::Teleport | LocomotorKind::Tunnel if !is_moving(entity)? => {
+            //7180CC and728ABC return the linked object's Location when stopped.
             super::foot_coordinate::current_coordinate(entity)
         }
         LocomotorKind::Walk | LocomotorKind::Fly | LocomotorKind::Jumpjet
@@ -51,12 +52,13 @@ pub(crate) fn destination(entity: &GameEntity) -> Option<crate::sim::components:
         LocomotorKind::Fly => loco.fly_runtime()?.destination(),
         LocomotorKind::Jumpjet => loco.jumpjet_runtime()?.destination(),
         LocomotorKind::Teleport => loco.teleport_runtime()?.armed_destination().unwrap_or(null),
+        LocomotorKind::Tunnel => loco.tunnel_runtime()?.destination(),
     })
 }
 
 /// Drive4AFB80, Ship69F290, Walk75AB30, Fly4CCA90, Jumpjet54AE50,
-/// Hover514C30 and Rocket661F50. Teleport718080 delegates to its existing
-/// state owner.
+/// Hover514C30, Rocket661F50 and Tunnel728A50. Teleport718080 delegates to
+/// its existing state owner.
 /// Evidence: locomotor_moving, air_locomotor_moving, cmin_dock and
 /// jumpjet_infantry_actions --default-motion native corpora; Teleport's
 /// ordinary move/stop controls (infantry_teleport_destination) establish the
@@ -80,6 +82,9 @@ pub fn is_moving(entity: &GameEntity) -> Option<bool> {
         LocomotorKind::Rocket => locomotor
             .rocket_runtime()
             .map(super::rocket_movement::RocketRuntime::is_moving),
+        LocomotorKind::Tunnel => locomotor
+            .tunnel_runtime()
+            .map(super::tunnel_movement::TunnelRuntime::is_moving),
     }
 }
 

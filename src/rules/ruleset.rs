@@ -781,9 +781,12 @@ pub struct GeneralRules {
     /// Low byte of `CliffBackImpassability=` in `[General]`.
     /// Byte 0 skips the scan; only byte 2 can write Rock. Default 2 in standard YR.
     pub cliff_back_impassability: u8,
-    /// Underground travel speed for Tunnel locomotor units (TunnelSpeed=).
-    /// Default 6.0 cells/second matching RA2 default.
-    pub tunnel_speed: SimFixed,
+    /// `[General] TunnelSpeed=`, the double at `Rules+0x20` (ReadDouble
+    /// `0x0066EDA9` with the current value as default; constructor 1.0 at
+    /// `0x00665685`). The Tunnel locomotor multiplies GetCurrentSpeed by it
+    /// for its vertical dig speed and divides its dig-in delay by it
+    /// (`sim::movement::tunnel_movement`); underground travel ignores it.
+    pub tunnel_speed: NativeF64Bits,
     /// Rules+598: ReadDouble at 66EC37, constructor .25 at 665DBD.
     /// Bullet guidance uses sin((signed native ID + frame) % 15 * 2pi/15).
     pub missile_rot_var: f64,
@@ -1273,12 +1276,20 @@ pub struct GeneralRules {
     /// gamemd: `RulesClass::ReadAudioVisual @ 0x00669331..0x00669367` reads
     /// the key at `0x0083AB70` (`"DigSound"`). Despite the name it is the
     /// nuke siren — stock `rulesmd.ini` says so in a comment — and
-    /// `SuperClass::Launch @ 0x006CC390` case 0 (`Type=MultiMissile`) is its
-    /// only reader, playing it at the target coordinate through
-    /// `VocClass::PlayAtCoord @ 0x00750E20` on both branches
-    /// (`0x006CDCA8`/`0x006CDCAE` when the silo animates the launch,
-    /// `0x006CDDE3`/`0x006CDDE9` when it does not).
+    /// `SuperClass::Launch @ 0x006CC390` case 0 (`Type=MultiMissile`) plays
+    /// it at the target coordinate through `VocClass::PlayAtCoord @
+    /// 0x00750E20` on both branches (`0x006CDCA8`/`0x006CDCAE` when the silo
+    /// animates the launch, `0x006CDDE3`/`0x006CDDE9` when it does not). Its
+    /// other reader is the Tunnel locomotor, which plays it at the digging
+    /// unit's Location through `VocClass::PlayAt @ 0x007509E0` (`0x0072930C`,
+    /// `0x00728F1B`, `0x007297EE`, `0x007299D7`).
     pub dig_sound: Option<String>,
+    /// `[AudioVisual] Dig=`, the AnimType at `Rules+0x294` (ReadString then
+    /// the AnimType lookup, `0x0066A587..0x0066A5B1`, empty read keeping the
+    /// field). The Tunnel locomotor constructs it at the digging unit's
+    /// Location as it starts to dig in, as it goes under and as it breaks the
+    /// surface (`0x00729360`, `0x00728F6F`, `0x00729A2F`).
+    pub dig: AnimRef,
     /// `[General] NukeTakeOff=` (stock `NUKETO`), the AnimType at `Rules+0x98`
     /// (ReadString then the AnimType lookup, `0x0066D829..0x0066D850`;
     /// constructor null at `0x00665735`). `BuildingClass::Mission_Missile`
@@ -2546,7 +2557,7 @@ impl Default for GeneralRules {
             ally_change_allowed: true,
             comp_easy_bonus: true,
             paranoid: true,
-            tunnel_speed: SimFixed::from_num(6.0_f32),
+            tunnel_speed: NativeF64Bits::ONE,
             missile_rot_var: 0.25,
             safety_altitude: 500,
             line_trail_color_override: [0; 3],
@@ -2690,6 +2701,10 @@ impl Default for GeneralRules {
             // definition of EAX before it is `0x00667202 MOV EAX,0x1`.
             lightning_print_text: true,
             dig_sound: None,
+            // The RulesClass constructor's null pointer (`0x00665A10`).
+            dig: AnimRef {
+                name: String::new(),
+            },
             nuke_take_off: String::new(),
             ai_super_defense_probability: Vec::new(),
             ai_super_defense_distance: 10,
@@ -3776,7 +3791,7 @@ impl GeneralRules {
             ally_change_allowed,
             comp_easy_bonus: defaults.comp_easy_bonus,
             paranoid,
-            tunnel_speed: SimFixed::from_num(general.read_double("TunnelSpeed", 6.0) as f32),
+            tunnel_speed: general.read_double_bits("TunnelSpeed", defaults.tunnel_speed),
             flight_level: general.read_int("FlightLevel", 500),
             attacking_aircraft_sight_range: general.read_int(
                 "AttackingAircraftSightRange",
@@ -3916,6 +3931,7 @@ impl GeneralRules {
             // constructor's `true` (see the field doc).
             lightning_print_text: general.read_bool("LightningPrintText", true),
             dig_sound: audio_visual.read_name("DigSound", 0x80).map(str::to_owned),
+            dig: defaults.dig.clone(),
             nuke_take_off: defaults.nuke_take_off.clone(),
             ai_super_defense_probability: general
                 .read_int_list("AISuperDefenseProbability")
