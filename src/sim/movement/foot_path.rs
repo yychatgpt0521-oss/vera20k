@@ -1273,6 +1273,7 @@ impl Simulation {
             ZoneQueryCell::Copied(goal),
             start_bridge,
             goal_bridge,
+            None,
             rules,
         )
     }
@@ -1282,6 +1283,14 @@ impl Simulation {
     /// read: the second lookup and the bridge helpers may restamp Dummy,
     /// including before the original arguments are reread for distances.
     /// The bridge booleans are copied inputs, not live Cell flag queries.
+    /// `movement_override` is the sixth argument: `None` is the -1 that
+    /// Find_Path, Approach and Patrol pass, taking the Foot type's
+    /// MovementZone (`0x0042D1EB..0x0042D210`); the Unit tunnel test passes
+    /// Normal (`0x007460B6`).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the native query's six arguments and the rules"
+    )]
     pub(crate) fn estimate_zone_cost_in_query(
         &self,
         id: u64,
@@ -1289,6 +1298,7 @@ impl Simulation {
         goal: ZoneQueryCell,
         start_bridge: bool,
         goal_bridge: bool,
+        movement_override: Option<MovementZone>,
         rules: &RuleSet,
     ) -> Result<i32, String> {
         use crate::sim::cell_rect::get_cellclass_fallback;
@@ -1306,6 +1316,7 @@ impl Simulation {
         let object = self
             .object_type(actor.type_ref(), rules)
             .ok_or("EstimateZoneCost requires the mover type")?;
+        let movement_zone = movement_override.unwrap_or(object.movement_zone);
         let terrain = self
             .resolved_terrain
             .as_ref()
@@ -1335,7 +1346,7 @@ impl Simulation {
             self.playfield_bounds(),
         )?;
         let hierarchy = zones
-            .hierarchy_for(object.movement_zone)
+            .hierarchy_for(movement_zone)
             .ok_or("EstimateZoneCost requires the native movement row")?;
         let start_zone = zones
             .hierarchy_zone_at_native(0, start_projection)
@@ -1357,7 +1368,7 @@ impl Simulation {
             hierarchy,
             start_zone,
             goal_zone,
-            object.movement_zone,
+            movement_zone,
             &ZonePrecheckExclusions::default(),
             Some(ZonePrecheckThreat::new(coefficient, &threat_lookup)),
         )?

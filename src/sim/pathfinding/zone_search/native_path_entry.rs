@@ -83,9 +83,13 @@ pub(super) fn live_mode_one(
     })
 }
 
+/// `0x005835D0(out, cell, reference)`. 583180 passes the cell's own
+/// retained coordinate as `reference` (`None`); 5833F0 passes its caller's
+/// reference cell.
 fn live_no_record_projection(
     terrain: &ResolvedTerrainGrid,
     original: &CellRef<'_>,
+    reference: Option<(u16, u16)>,
     bounds: Option<PlayfieldBounds>,
 ) -> Result<(u16, u16), &'static str> {
     let c = live_cell_coord(original);
@@ -127,11 +131,12 @@ fn live_no_record_projection(
     // the original retained reference before distance calculation.
     let positive_inside = live_mode_one(terrain, bounds, pc);
     let negative_inside = live_mode_one(terrain, bounds, nc);
+    let reference = reference.unwrap_or_else(|| live_cell_coord(original));
     let mut selected = if positive_inside { pc } else { (0, 0) };
     if negative_inside
         && (selected == (0, 0)
-            || zone_build::native_packed_cell_distance(live_cell_coord(original), pc)
-                > zone_build::native_packed_cell_distance(live_cell_coord(original), nc))
+            || zone_build::native_packed_cell_distance(reference, pc)
+                > zone_build::native_packed_cell_distance(reference, nc))
     {
         selected = nc;
     }
@@ -155,7 +160,7 @@ pub(crate) fn live_hierarchy_projection(
         return Ok(c);
     }
     let Some(record) = zone_build::find_high_bridge_record(records, 0, c, 2) else {
-        return live_no_record_projection(terrain, original, bounds);
+        return live_no_record_projection(terrain, original, None, bounds);
     };
     let offset = if flags & 0x800 != 0 {
         (0, c.1.wrapping_sub(record.endpoint_a.1))
@@ -194,6 +199,62 @@ pub(crate) fn live_hierarchy_projection(
     } else {
         record.endpoint_a
     }))
+}
+
+/// `MapClass @ 0x005833F0(out, bridge_cell, reference)`: the end of the
+/// bridge under `bridge_cell` that the Subterranean route planner
+/// (`UnitClass @ 0x007447B0`) and the Unit setter (`0x00742214`) head for.
+/// The first high record within one cell of it (`FindBridgeRecord(cell, 1,
+/// 0)`, `0x00583404`) answers, when active (`+8`), the endpoint nearer
+/// `reference` (ties go to B, `0x005834B5`); when inactive, endpoint B if the
+/// first non-bridge cell along the bridge (direction 2 east or 4 south)
+/// is a bridge tile that is not Rock, else A (`0x005834D9..0x0058356F`).
+/// Without a record, 583180's no-record walk measures from `reference`
+/// (`0x0058357E`, [`live_no_record_projection`]).
+pub(crate) fn bridge_end_toward(
+    terrain: &ResolvedTerrainGrid,
+    records: &[crate::sim::bridge_state::BridgeEndpointRecord],
+    bridge_cell: (u16, u16),
+    reference: (u16, u16),
+    bounds: Option<PlayfieldBounds>,
+) -> Result<(u16, u16), &'static str> {
+    let cell = get_cellclass_fallback(
+        Some(terrain),
+        i32::from(bridge_cell.0 as i16),
+        i32::from(bridge_cell.1 as i16),
+    );
+    let Some(record) = zone_build::find_high_bridge_record(records, 0, bridge_cell, 1) else {
+        return live_no_record_projection(terrain, &cell, Some(reference), bounds);
+    };
+    if record.active {
+        return Ok(
+            if zone_build::native_packed_cell_distance(reference, record.endpoint_a)
+                < zone_build::native_packed_cell_distance(reference, record.endpoint_b)
+            {
+                record.endpoint_a
+            } else {
+                record.endpoint_b
+            },
+        );
+    }
+    let direction = if record.endpoint_a.0 == record.endpoint_b.0 {
+        4
+    } else {
+        2
+    };
+    let mut current = cell;
+    let mut visited = BTreeSet::new();
+    while live_cell_flags(&current) & 0x100 != 0 {
+        if !visited.insert(live_cell_state(&current)) {
+            return Err("cyclic5833F0 inactive walk");
+        }
+        current = live_cell_step(terrain, &current, direction);
+    }
+    Ok(if live_high_nonrock(terrain, &current) {
+        record.endpoint_b
+    } else {
+        record.endpoint_a
+    })
 }
 
 pub(super) fn prepare_native_path_entry(

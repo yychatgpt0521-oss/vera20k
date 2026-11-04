@@ -40,7 +40,7 @@ use super::infantry_entry::InfantryEntryArgs;
 use super::movement_tick::FootPathRequest;
 use crate::map::entities::EntityCategory;
 use crate::map::resolved_terrain::NativeCellQuery;
-use crate::rules::locomotor_type::LocomotorKind;
+use crate::rules::locomotor_type::{LocomotorKind, MovementZone};
 use crate::rules::mission_data::MissionType;
 use crate::rules::overlay_types::OverlayTypeRegistry;
 use crate::rules::ruleset::RuleSet;
@@ -1054,13 +1054,43 @@ impl Simulation {
                 }
             }
         }
+        // 0x00741E8E..0x00742088: a driving Subterranean unit's order waits
+        // on its navigation list; the setter goes on to its current cell
+        // without the NavQueue arm (the flag is cleared at 0x00741FB6).
+        let mut clear_queue = clear_queue;
+        if let Some(target) = destination
+            && let Some(current) = self.unit_subterranean_driving_order(id, target, rules)
+        {
+            destination = Some(current);
+            clear_queue = false;
+        }
         // Native7422F4/7423CA clears NavQueue after the Enter arm, before
         // the UnitRepair/Bunker tail. A false flag preserves non-NULL requests for
         // Enter's pop; the modified-NULL arm7423CA clears the queue regardless.
-        if (clear_queue || destination.is_none())
-            && let Some(unit) = self.substrate.entities.get_mut(id)
-        {
-            unit.navigation.clear_nav_queue();
+        // A Subterranean type's nonnull order instead takes its own NavQueue
+        // arm (0x007420A5..0x007422F4), which may plan a route.
+        let original_destination = destination;
+        let subterranean = self
+            .substrate
+            .entities
+            .get(id)
+            .and_then(|unit| self.entity_object_type(unit, rules))
+            .is_some_and(|object| object.movement_zone == MovementZone::Subterranean);
+        match destination {
+            Some(target) if clear_queue && subterranean => {
+                destination = self.unit_subterranean_order(id, target, rules);
+            }
+            _ => {
+                if (clear_queue || destination.is_none())
+                    && let Some(unit) = self.substrate.entities.get_mut(id)
+                {
+                    unit.navigation.clear_nav_queue();
+                }
+            }
+        }
+        // 0x007422F7: after either nonnull arm, a surfacing Tunnel holds.
+        if clear_queue && original_destination.is_some() {
+            destination = self.unit_surfacing_hold(id, destination);
         }
         // Native runs this UnitRepair/Bunker tail (`0x00742C14..0x00742D3F`) after
         // the Teleporter arm (`0x007423CD..0x00742C14`), which VERA runs

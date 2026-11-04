@@ -270,6 +270,18 @@ impl NavigationState {
         (!self.nav_queue.is_empty()).then(|| self.nav_queue.remove(0))
     }
 
+    /// The NavQueue's DynamicVectorClass AddItem: the Subterranean route
+    /// planner's legs (`UnitClass @ 0x007447B0`).
+    pub(crate) fn push_nav_queue(&mut self, target: NavTargetRef) {
+        self.nav_queue.push(target);
+    }
+
+    /// The NavQueue's front insert: a surfacing Tunnel unit's order waits
+    /// there (the Unit setter, `0x00742322..0x00742385`).
+    pub(crate) fn insert_nav_queue_front(&mut self, target: NavTargetRef) {
+        self.nav_queue.insert(0, target);
+    }
+
     /// Append to a fixture's NavQueue.
     #[cfg(any(test, feature = "test-support"))]
     pub fn push_nav_queue_for_test(&mut self, target: NavTargetRef) {
@@ -317,6 +329,12 @@ impl NavigationState {
         if self.nav_list_loops {
             self.nav_list.push(head);
         }
+    }
+
+    /// The list's front insert: the Unit setter's Subterranean Drive arm
+    /// (`0x00741F3B..0x00741F97`). The loop flag stays.
+    pub(crate) fn insert_nav_list_front(&mut self, target: NavTargetRef) {
+        self.nav_list.insert(0, target);
     }
 
     /// The list's DynamicVectorClass Clear (vt+0xC): `0x004DA1C0` and its

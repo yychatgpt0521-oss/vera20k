@@ -1229,27 +1229,17 @@ impl Simulation {
         let Some(entity) = self.substrate.entities.get_mut(id) else {
             return false;
         };
-        // Foot4D8382..83E2 takes NavQueue even with an existing NavCom.
+        // Foot4D8382..83E2 takes NavQueue even with an existing NavCom,
+        // whatever the entry: the Subterranean route planner (Unit 7447B0)
+        // queues Cells and its original target, which may be an object.
         // Preserve its saved return independently from the resulting NavCom.
-        // Non-Cell targets and other class END remain bounded base-receiver
-        // gaps; no whole mission tick substitutes for those calls.
-        let queued_cell = entity
-            .navigation
-            .nav_queue()
-            .first()
-            .copied()
-            .and_then(|next| {
-                if let crate::sim::components::NavTargetRef::Cell { rx, ry } = next {
-                    Some((rx, ry))
-                } else {
-                    None
-                }
-            });
+        // Other class END remains a bounded base-receiver gap; no whole
+        // mission tick substitutes for those calls.
+        let queued = entity.navigation.nav_queue().first().copied();
         // 4D838E..83CA: vt+0x480(queue[0], 0) through the one dispatcher,
         // which keeps its own NavCom fallback for a receiver no class setter
         // represents, then the queue shift.
-        if let Some((rx, ry)) = queued_cell {
-            let target = crate::sim::components::NavTargetRef::cell(rx, ry);
+        if let Some(target) = queued {
             if let Err(cause) =
                 self.assign_destination_keeping_queue(id, Some(target), rules, registry, effects)
             {
@@ -1263,7 +1253,7 @@ impl Simulation {
         }
         // A consumed NavQueue or ended piggyback returns true before
         // the Infantry Archive arm and final zero-speed setter.
-        if ended || queued_cell.is_some() {
+        if ended || queued.is_some() {
             return true;
         }
         // Foot4D8472..852A: Archive belongs to Techno, and +2DC is

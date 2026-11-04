@@ -4,7 +4,7 @@
 //! A tunnel unit turns to face its destination, waits a dig delay, sinks to
 //! Location Z -256, travels there in a straight line 19 leptons a frame, rises
 //! at the destination and waits again before it idles. No retail YR type
-//! selects it; mods do (Mental Omega's `DRIL`, `SMIN`, `SCAV`). The Unit
+//! selects it; mods do (Mental Omega's `DRIL`, `SMIN`, `SCAV`, `WORMQ`). The Unit
 //! setter decides per order whether a surface tunnel unit digs or drives a
 //! Drive piggyback instead ([`Simulation::unit_tunnel_arm`]).
 //!
@@ -13,14 +13,11 @@
 //! timer at `+0x28` with its rate at `+0x34`). The byte at `+0x38` has no
 //! reader: Process and the arrival clear it and `Z_Adjust` sets it.
 //!
+//! The Unit setter routes orders it cannot dig straight to through its
+//! Subterranean arms and route planner ([`Simulation::unit_subterranean_order`],
+//! [`Simulation::unit_subterranean_driving_order`], `0x007447B0`).
+//!
 //! RESIDUALS:
-//! - The Unit setter's two Subterranean arms (`0x00741E8E..0x00742088`, a
-//!   moving Drive's nav-list insert; `0x0074208A..0x007423CD`, the route
-//!   planner `0x007447B0` and the NavQueue hold of an order given while the
-//!   unit surfaces) are not ported. Trigger: a second order to a driving or
-//!   surfacing tunnel unit, or a destination the planner would move. Effect:
-//!   the driving unit re-paths at once; the surfacing unit drops the order
-//!   when it idles; the order keeps its own cell. Frequency: every such order.
 //! - The class `Can_Enter_Cell` (`0x0072A090`) answers only through
 //!   [`cell_allows_burrowing`] for the Unit setter and FNPC; the `+0x1C` query
 //!   Foot `0x004D9C10` forwards for a locomotor-checking mover (docking,
@@ -35,11 +32,11 @@
 
 use crate::map::cell_index::NativeCellIdentity;
 use crate::map::resolved_terrain::NativeCellQuery;
-use crate::rules::locomotor_type::{MovementZone, SpeedType};
+use crate::rules::locomotor_type::{LocomotorKind, MovementZone, SpeedType};
 use crate::rules::overlay_types::OverlayTypeRegistry;
 use crate::rules::ruleset::RuleSet;
 use crate::sim::cell_rect::PlayfieldBounds;
-use crate::sim::components::{AnimClassSpawnDescriptor, DriveCoord};
+use crate::sim::components::{AnimClassSpawnDescriptor, DriveCoord, NavTargetRef};
 use crate::sim::game_entity::GameEntity;
 use crate::sim::occupancy::OccupancyGrid;
 use crate::sim::timer::CdTimer;
@@ -1000,17 +997,7 @@ impl Simulation {
             cells.flags(cells.lookup_world(destination.x, destination.y)) & 0x100 != 0
         });
         let navigation = self.foot_navigation_coordinate(id).unwrap_or(location);
-        let on_bridge = self.resolved_terrain.as_ref().is_some_and(|terrain| {
-            super::ground_pose::navigation_should_be_on_bridge(
-                &NativeCellQuery::canonical(terrain),
-                navigation,
-                location,
-                entity.on_bridge(),
-                entity.low_bridge_tube_state.is_some(),
-            )
-            .unwrap_or(false)
-        });
-        let tunnels = !on_bridge
+        let tunnels = !self.unit_navigation_on_bridge(id)
             && !destination_bridge
             && self.tunnel_burrowable_at(navigation)
             && self.tunnel_burrowable_at(destination)
@@ -1083,10 +1070,19 @@ impl Simulation {
         let to_bridge = terrain.is_some_and(|terrain| {
             terrain.native_cell_flags(terrain.native_cell_identity(to)) & 0x100 != 0
         });
-        // 0x007460B6..0x007460E9: the destination's bridge flag is the
-        // fifth argument, after the Foot and a zero.
-        self.estimate_zone_cost(id, from, to, false, to_bridge, rules)
-            .map_or(true, |cost| cost > 15)
+        // 0x007460B6..0x007460E9: (from, to, Foot, 0, the destination's
+        // bridge flag, MovementZone Normal), the last pushed first.
+        use crate::sim::pathfinding::zone_map::ZoneQueryCell;
+        self.estimate_zone_cost_in_query(
+            id,
+            ZoneQueryCell::Copied(from),
+            ZoneQueryCell::Copied(to),
+            false,
+            to_bridge,
+            Some(MovementZone::Normal),
+            rules,
+        )
+        .map_or(true, |cost| cost > 15)
     }
 
     /// `MapClass::Can_Reach_Zone @ 0x0056D100` as `0x00746030` asks it:
@@ -1115,6 +1111,545 @@ impl Simulation {
                 (bounds.base, height),
             )
             .unwrap_or(true)
+    }
+}
+
+/// The end of one Subterranean route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteEnd {
+    /// The planner's own target (`ebp` from `0x0074484E`).
+    Target,
+    /// A cell it found (`Map.GetCell`, `0x005657A0`).
+    Cell((i16, i16)),
+}
+
+/// The planner's answer before it is queued: the legs, then the end.
+enum Route {
+    Legs(Vec<(i16, i16)>, RouteEnd),
+    /// `0x00745FEB`: NULL, with no queue entry.
+    Null,
+}
+
+impl Route {
+    fn target() -> Self {
+        Route::Legs(Vec::new(), RouteEnd::Target)
+    }
+}
+
+impl Simulation {
+    /// Foot vt+0xBC(0) (`0x004DDC40` -> Object `0x005F6A70`): whether the
+    /// unit's navigation should be on a bridge.
+    fn unit_navigation_on_bridge(&self, id: u64) -> bool {
+        let (Some(entity), Some(terrain), Some(location)) = (
+            self.substrate.entities.get(id),
+            self.resolved_terrain.as_ref(),
+            self.tunnel_location(id),
+        ) else {
+            return false;
+        };
+        let navigation = self.foot_navigation_coordinate(id).unwrap_or(location);
+        super::ground_pose::navigation_should_be_on_bridge(
+            &NativeCellQuery::canonical(terrain),
+            navigation,
+            location,
+            entity.on_bridge(),
+            entity.low_bridge_tube_state.is_some(),
+        )
+        .unwrap_or(false)
+    }
+
+    /// The cell words of a destination's GetCoords (vt+0x48), as the setter
+    /// and planner truncate them (`0x0074485C..0x00744888`).
+    fn nav_target_cell(&self, target: NavTargetRef) -> Option<(i16, i16)> {
+        let terrain = self.resolved_terrain.as_ref()?;
+        let coords = super::ground_pose::target_get_coords(
+            target.into(),
+            self,
+            Some(&NativeCellQuery::canonical(terrain)),
+        )?;
+        Some(super::foot_path::coord_cell(coords))
+    }
+
+    fn cell_is_bridge(&self, cell: (i16, i16)) -> bool {
+        self.resolved_terrain.as_ref().is_some_and(|terrain| {
+            terrain.native_cell_flags(terrain.native_cell_identity(cell)) & 0x100 != 0
+        })
+    }
+
+    /// `MapClass @ 0x005833F0` on cell words.
+    fn tunnel_bridge_end(&self, bridge_cell: (i16, i16), reference: (i16, i16)) -> (i16, i16) {
+        let (Some(terrain), Some(zones)) =
+            (self.resolved_terrain.as_ref(), self.zone_grid.as_ref())
+        else {
+            return bridge_cell;
+        };
+        crate::sim::pathfinding::zone_search::native_path_entry::bridge_end_toward(
+            terrain,
+            zones.bridge_records(),
+            (bridge_cell.0 as u16, bridge_cell.1 as u16),
+            (reference.0 as u16, reference.1 as u16),
+            self.playfield_bounds(),
+        )
+        .map_or(bridge_cell, |end| (end.0 as i16, end.1 as i16))
+    }
+
+    /// `MapClass::GetZoneID @ 0x0056D230(cell, Normal, bridge)`.
+    fn tunnel_zone(&self, cell: (i16, i16), bridge: bool) -> Option<u32> {
+        let (terrain, zones) = (self.resolved_terrain.as_ref()?, self.zone_grid.as_ref()?);
+        zones.get_zone_id_native(
+            terrain,
+            (cell.0 as u16, cell.1 as u16),
+            MovementZone::Normal,
+            bridge,
+        )
+    }
+
+    /// One of the planner's FNPC calls (`0x0056DC20`): Track speed,
+    /// MovementZone Normal, a one-cell footprint, no overlay rejection,
+    /// bridges allowed, no close-to cell and no occupancy test. NullCell is
+    /// `None`.
+    fn tunnel_nearby(
+        &self,
+        seed: (i16, i16),
+        zone: Option<u32>,
+        bridge_aware: bool,
+        check_height: bool,
+        require_burrowable: bool,
+    ) -> Option<(i16, i16)> {
+        use crate::sim::find_nearby_cell::{
+            NearbyArgs, NearbyFootprint, NearbySearchOptions, PassabilityArgs,
+        };
+        self.nearby_passable_cell(
+            (i32::from(seed.0), i32::from(seed.1)),
+            NearbyArgs {
+                check_height,
+                options: NearbySearchOptions {
+                    require_burrowable,
+                    ..Default::default()
+                },
+                ..NearbyArgs::plain(
+                    PassabilityArgs {
+                        speed_type: SpeedType::Track,
+                        required_zone_id: zone,
+                        movement_zone: MovementZone::Normal,
+                        bridge_aware_zone: bridge_aware,
+                    },
+                    NearbyFootprint::SINGLE,
+                )
+            },
+        )
+        .filter(|cell| *cell != (0, 0))
+        .map(|(x, y)| (x as i16, y as i16))
+    }
+
+    /// `MapClass::Can_Reach_Zone @ 0x0056D100(own, target, Normal, ...)`. A
+    /// world without zone topology answers reachable.
+    fn tunnel_reachable(
+        &self,
+        from: (i16, i16),
+        to: (i16, i16),
+        from_bridge: bool,
+        to_bridge: bool,
+    ) -> bool {
+        use crate::sim::pathfinding::zone_map::ZoneQueryCell;
+        let (Some(terrain), Some(zones), Some(bounds), Some(height)) = (
+            self.resolved_terrain.as_ref(),
+            self.zone_grid.as_ref(),
+            self.playfield_bounds(),
+            self.playfield_size_height(),
+        ) else {
+            return true;
+        };
+        zones
+            .can_reach_native(
+                &NativeCellQuery::canonical(terrain),
+                ZoneQueryCell::Copied(from),
+                ZoneQueryCell::Copied(to),
+                MovementZone::Normal,
+                from_bridge,
+                to_bridge,
+                false,
+                bounds,
+                (bounds.base, height),
+            )
+            .unwrap_or(true)
+    }
+
+    /// `UnitClass @ 0x007447B0`, the Subterranean route planner the Unit
+    /// setter runs for an order it cannot dig straight to
+    /// ([`Self::unit_subterranean_order`]). It clears the NavQueue, queues
+    /// the legs it chooses and then the final entry, and answers the queue's
+    /// front, which it removes (`0x00744BCF..0x00744C3B`); or NULL with the
+    /// queue empty (`0x00745FEB`).
+    ///
+    /// Its cases split on whether the unit's navigation is on a bridge
+    /// (vt+0xBC), whether the target cell is a bridge cell and burrowable,
+    /// and whether the unit can dig where it stands (its navigation cell
+    /// burrowable, or already under the ground). Bridge ends come from
+    /// `0x005833F0` ([`Self::tunnel_bridge_end`]); each trip is asked whether
+    /// it is worth a tunnel (`0x00746000`). The typical case, a burrowable
+    /// start and a target that is not (a building, a tree, a slope), digs to
+    /// the nearest burrowable cell in the target's zone and queues the target
+    /// behind it (`0x00745590..0x00745616`).
+    pub(crate) fn unit_tunnel_route(
+        &mut self,
+        id: u64,
+        target: NavTargetRef,
+        rules: &RuleSet,
+    ) -> Option<NavTargetRef> {
+        if let Some(entity) = self.substrate.entities.get_mut(id) {
+            entity.navigation.clear_nav_queue();
+        }
+        let Route::Legs(legs, end) = self.plan_tunnel_route(id, target, rules) else {
+            return None;
+        };
+        let entity = self.substrate.entities.get_mut(id)?;
+        let cell = |(x, y): (i16, i16)| NavTargetRef::cell(x as u16, y as u16);
+        for leg in legs {
+            entity.navigation.push_nav_queue(cell(leg));
+        }
+        entity.navigation.push_nav_queue(match end {
+            RouteEnd::Target => target,
+            RouteEnd::Cell(found) => cell(found),
+        });
+        entity.navigation.pop_nav_queue_front()
+    }
+
+    fn plan_tunnel_route(&self, id: u64, target: NavTargetRef, rules: &RuleSet) -> Route {
+        let Some(location) = self.tunnel_location(id) else {
+            return Route::target();
+        };
+        let navigation = self.foot_navigation_coordinate(id).unwrap_or(location);
+        let own = super::foot_path::coord_cell(navigation);
+        let Some(tgt) = self.nav_target_cell(target) else {
+            return Route::target();
+        };
+        let on_bridge = self.unit_navigation_on_bridge(id);
+        let can_dig_here = self.cell_burrowable(own) || self.tunnel_height(id) < 0;
+        let tgt_bridge = self.cell_is_bridge(tgt);
+        let tgt_burrowable = self.cell_burrowable(tgt);
+        let worth = |from, to| self.unit_tunnel_worthwhile(id, from, to, rules);
+        let near = |seed: (i16, i16)| {
+            self.tunnel_nearby(seed, self.tunnel_zone(seed, false), false, true, true)
+        };
+        // The fallback each case ends on (`0x00744C3E`, `0x007454B6`,
+        // `0x007456CF` and their twins): a passable cell near the target in
+        // the unit's zone, with no burrow test; NULL for none, or for a unit
+        // under the ground.
+        let settle = |bridge_aware: bool, check_height: bool| match self.tunnel_nearby(
+            tgt,
+            self.tunnel_zone(own, bridge_aware),
+            bridge_aware,
+            check_height,
+            false,
+        ) {
+            Some(found) if self.tunnel_height(id) >= 0 => {
+                Route::Legs(Vec::new(), RouteEnd::Cell(found))
+            }
+            _ => Route::Null,
+        };
+        // A leg to `end` ahead of `rest`, unless `end` is the unit's cell.
+        let via = |end: (i16, i16), rest: &[(i16, i16)]| {
+            let mut legs = Vec::new();
+            if end != own {
+                legs.push(end);
+            }
+            legs.extend_from_slice(rest);
+            legs
+        };
+        // `first` found but not the second leg: the burrowable cell nearest
+        // the target, in any zone, ends the trip after `first`, unless there
+        // is none or it is `first` itself.
+        let detour = |first: Option<(i16, i16)>,
+                      bridge_aware: bool,
+                      check_height: bool,
+                      fallback: &dyn Fn() -> Route| {
+            let Some(first) = first else {
+                return fallback();
+            };
+            match self.tunnel_nearby(tgt, None, bridge_aware, check_height, true) {
+                Some(end) if end != first => Route::Legs(vec![first], RouteEnd::Cell(end)),
+                _ => fallback(),
+            }
+        };
+        if on_bridge {
+            let own_end = self.tunnel_bridge_end(own, tgt);
+            let bridge_settle = || settle(true, true);
+            if tgt_bridge {
+                // 0x007448CA..0x00744DC5.
+                let tgt_end = self.tunnel_bridge_end(tgt, tgt);
+                if !worth(own_end, tgt_end) {
+                    return Route::Legs(via(own_end, &[tgt_end]), RouteEnd::Target);
+                }
+                let zone = self.tunnel_zone(own_end, false);
+                let a = self.tunnel_nearby(own_end, zone, false, true, true);
+                let b = self.tunnel_nearby(tgt_end, zone, false, true, true);
+                if let (Some(a), Some(b)) = (a, b) {
+                    return Route::Legs(vec![a, b], RouteEnd::Target);
+                }
+                if self.tunnel_reachable(own, tgt, true, true) {
+                    return Route::Legs(via(own_end, &[tgt_end]), RouteEnd::Target);
+                }
+                return detour(a, true, false, &bridge_settle);
+            }
+            if !worth(own_end, tgt) {
+                return Route::Legs(via(own_end, &[]), RouteEnd::Target);
+            }
+            let a = near(own_end);
+            if tgt_burrowable {
+                // 0x00744DCA..0x00744FA5.
+                if let Some(a) = a {
+                    return Route::Legs(vec![a], RouteEnd::Target);
+                }
+                if self.tunnel_reachable(own, tgt, true, false) {
+                    return Route::Legs(via(own_end, &[]), RouteEnd::Target);
+                }
+                return bridge_settle();
+            }
+            // 0x00744FAA..0x00745347.
+            if let (Some(a), Some(b)) = (a, near(tgt)) {
+                return Route::Legs(vec![a, b], RouteEnd::Target);
+            }
+            if self.tunnel_reachable(own, tgt, true, false) {
+                return Route::Legs(via(own_end, &[]), RouteEnd::Target);
+            }
+            return detour(a, true, true, &bridge_settle);
+        }
+        let ground_settle = || settle(false, false);
+        if can_dig_here {
+            if tgt_bridge {
+                // 0x00745364..0x0074558B.
+                let tgt_end = self.tunnel_bridge_end(tgt, tgt);
+                if !worth(own, tgt_end) {
+                    return Route::Legs(via(tgt_end, &[]), RouteEnd::Target);
+                }
+                if let Some(a) = near(tgt_end) {
+                    return Route::Legs(vec![a], RouteEnd::Target);
+                }
+                if self.tunnel_reachable(own, tgt, false, true) {
+                    return Route::Legs(via(tgt_end, &[]), RouteEnd::Target);
+                }
+                if let Some(c) = self.tunnel_nearby(tgt, None, false, false, true) {
+                    return Route::Legs(Vec::new(), RouteEnd::Cell(c));
+                }
+                return settle(false, true);
+            }
+            // 0x00745590..0x0074575B.
+            if tgt_burrowable || !worth(own, tgt) {
+                return Route::target();
+            }
+            if let Some(a) = near(tgt) {
+                return Route::Legs(vec![a], RouteEnd::Target);
+            }
+            if self.tunnel_reachable(own, tgt, true, true) {
+                return Route::target();
+            }
+            if let Some(c) = self.tunnel_nearby(tgt, None, false, false, true) {
+                return Route::Legs(Vec::new(), RouteEnd::Cell(c));
+            }
+            return ground_settle();
+        }
+        if tgt_bridge {
+            // 0x00745768..0x00745B0E.
+            let tgt_end = self.tunnel_bridge_end(tgt, tgt);
+            if !worth(own, tgt_end) {
+                return Route::Legs(via(tgt_end, &[]), RouteEnd::Target);
+            }
+            let a = near(own);
+            if let (Some(a), Some(b)) = (a, near(tgt_end)) {
+                return Route::Legs(vec![a, b], RouteEnd::Target);
+            }
+            if self.tunnel_reachable(own, tgt, false, true) {
+                return Route::Legs(via(tgt_end, &[]), RouteEnd::Target);
+            }
+            return detour(a, false, false, &ground_settle);
+        }
+        if !worth(own, tgt) {
+            return Route::target();
+        }
+        if tgt_burrowable {
+            // 0x00745B13..0x00745C4F.
+            if let Some(a) = near(own) {
+                return Route::Legs(vec![a], RouteEnd::Target);
+            }
+            if self.tunnel_reachable(own, tgt, false, false) {
+                return Route::target();
+            }
+            return ground_settle();
+        }
+        // 0x00745C54..0x00745FE6.
+        let a = near(own);
+        if let (Some(a), Some(b)) = (a, near(tgt)) {
+            return Route::Legs(vec![a, b], RouteEnd::Target);
+        }
+        if self.tunnel_reachable(own, tgt, true, true) {
+            return Route::target();
+        }
+        detour(a, false, false, &ground_settle)
+    }
+
+    /// The Unit setter's arm for a `MovementZone=Subterranean` type that is
+    /// driving (`0x00741E8E..0x00742088`): a nonnull order to a moving unit
+    /// whose active locomotor is Drive goes to the front of its navigation
+    /// list, the NavQueue empties, and the setter goes on without its NavQueue
+    /// arm to the unit's navigation cell (Object+1C4, `0x005F6A10`). A bridge
+    /// cell there gives way to the passable cell nearest it (FNPC with the
+    /// type's MovementZone and no bridges, `0x00741FCD..0x00742075`) unless
+    /// the unit should be on the bridge. The order follows once the Drive
+    /// stops and the unit idles (Handle_Navigation_List). `None` leaves the
+    /// order to the setter.
+    pub(crate) fn unit_subterranean_driving_order(
+        &mut self,
+        id: u64,
+        target: NavTargetRef,
+        rules: &RuleSet,
+    ) -> Option<NavTargetRef> {
+        use crate::sim::find_nearby_cell::{NearbyArgs, NearbyFootprint, PassabilityArgs};
+        let entity = self.substrate.entities.get(id)?;
+        let movement_zone = self.object_type(entity.type_ref(), rules)?.movement_zone;
+        let driving = entity
+            .locomotor
+            .as_ref()
+            .is_some_and(|locomotor| locomotor.active_kind() == LocomotorKind::Drive)
+            && super::motion_query::is_moving(entity) == Some(true);
+        if movement_zone != MovementZone::Subterranean || !driving {
+            return None;
+        }
+        let entity = self.substrate.entities.get_mut(id)?;
+        entity.navigation.insert_nav_list_front(target);
+        entity.navigation.clear_nav_queue();
+        let cell = self.object_navigation_cell(id, rules).ok()?;
+        let keep = NavTargetRef::cell(cell.0 as u16, cell.1 as u16);
+        if !self.cell_is_bridge(cell) || self.unit_navigation_on_bridge(id) {
+            return Some(keep);
+        }
+        let zone = self
+            .resolved_terrain
+            .as_ref()
+            .zip(self.zone_grid.as_ref())
+            .and_then(|(terrain, zones)| {
+                zones.get_zone_id_native(
+                    terrain,
+                    (cell.0 as u16, cell.1 as u16),
+                    movement_zone,
+                    false,
+                )
+            });
+        let near = self
+            .nearby_passable_cell(
+                (i32::from(cell.0), i32::from(cell.1)),
+                NearbyArgs {
+                    allow_bridge_cells: false,
+                    check_height: true,
+                    ..NearbyArgs::plain(
+                        PassabilityArgs {
+                            speed_type: SpeedType::Track,
+                            required_zone_id: zone,
+                            movement_zone,
+                            bridge_aware_zone: false,
+                        },
+                        NearbyFootprint::SINGLE,
+                    )
+                },
+            )
+            .filter(|found| *found != (0, 0));
+        Some(near.map_or(keep, |(x, y)| NavTargetRef::cell(x, y)))
+    }
+
+    /// The Unit setter's NavQueue arm for a `MovementZone=Subterranean` type
+    /// given a NavQueue-clearing order (`0x0074208A..0x007422F4`). An order
+    /// along one bridge (both cells on the same high record, active or with
+    /// its two ends within two cells) or between two burrowable cells keeps
+    /// its target and empties the NavQueue; any other runs the route planner
+    /// ([`Self::unit_tunnel_route`]), whose answer becomes the destination.
+    pub(crate) fn unit_subterranean_order(
+        &mut self,
+        id: u64,
+        target: NavTargetRef,
+        rules: &RuleSet,
+    ) -> Option<NavTargetRef> {
+        let location = self.tunnel_location(id)?;
+        let navigation = self.foot_navigation_coordinate(id).unwrap_or(location);
+        let own = super::foot_path::coord_cell(navigation);
+        let Some(tgt) = self.nav_target_cell(target) else {
+            return Some(target);
+        };
+        let on_bridge = self.unit_navigation_on_bridge(id);
+        let own_burrowable = self.cell_burrowable(own);
+        let tgt_bridge = self.cell_is_bridge(tgt);
+        let tgt_burrowable = self.cell_burrowable(tgt);
+        let height = self.tunnel_height(id);
+        let mut one_bridge = false;
+        if on_bridge
+            && tgt_bridge
+            && let Some(zones) = self.zone_grid.as_ref()
+        {
+            // 0x007421B2..0x00742287: FindBridgeRecord(cell, 3, 0) of both.
+            use crate::sim::pathfinding::zone_build::{
+                find_high_bridge_record_index, native_packed_cell_distance,
+            };
+            let record = |cell: (i16, i16)| {
+                find_high_bridge_record_index(
+                    zones.bridge_records(),
+                    0,
+                    (cell.0 as u16, cell.1 as u16),
+                    3,
+                )
+            };
+            if let Some(index) = record(own)
+                && record(tgt) == Some(index)
+            {
+                one_bridge = zones.bridge_records()[index].active || {
+                    let own_end = self.tunnel_bridge_end(own, own);
+                    let tgt_end = self.tunnel_bridge_end(tgt, tgt);
+                    native_packed_cell_distance(
+                        (own_end.0 as u16, own_end.1 as u16),
+                        (tgt_end.0 as u16, tgt_end.1 as u16),
+                    ) <= 2
+                };
+            }
+        }
+        // 0x0074228C..0x007422C6 ([esp+0x15] still holds 0x00741E90's 0).
+        let leaves = if on_bridge { !one_bridge } else { tgt_bridge };
+        let plans = if (own_burrowable || height < 0) && tgt_burrowable {
+            leaves
+        } else {
+            !one_bridge || leaves
+        };
+        if plans {
+            return self.unit_tunnel_route(id, target, rules);
+        }
+        if let Some(entity) = self.substrate.entities.get_mut(id) {
+            entity.navigation.clear_nav_queue();
+        }
+        Some(target)
+    }
+
+    /// The setter's surfacing hold (`0x007422F7..0x007423BC`), after its
+    /// NavQueue arm: while the active locomotor is surfacing (Tunnel
+    /// `Is_Surfacing @ 0x0072A1E0`), the order waits at the NavQueue's front
+    /// and the unit holds the cell under it (`Map.GetCellAt(Location)`).
+    pub(crate) fn unit_surfacing_hold(
+        &mut self,
+        id: u64,
+        target: Option<NavTargetRef>,
+    ) -> Option<NavTargetRef> {
+        let surfacing = self
+            .substrate
+            .entities
+            .get(id)
+            .and_then(tunnel_runtime)
+            .is_some_and(TunnelRuntime::is_surfacing);
+        if !surfacing {
+            return target;
+        }
+        let location = self.tunnel_location(id)?;
+        let entity = self.substrate.entities.get_mut(id)?;
+        if let Some(target) = target {
+            entity.navigation.insert_nav_queue_front(target);
+        }
+        let (x, y) = super::foot_path::coord_cell(location);
+        Some(NavTargetRef::cell(x as u16, y as u16))
     }
 }
 
