@@ -76,7 +76,11 @@ origin.
   `In_Which_Layer 0x0072A1A0`), the visual character (`sim/game_entity.rs`,
   `0x007291D0`), FIRE_MOVING (`sim/combat/fire_error_world.rs`,
   `0x0072A1C0`), the surfacing NavQueue arm (`sim/movement/track_path.rs`,
-  `0x007422F7`) and the war-factory exit (`0x0044DEDD`).
+  `0x007422F7`), the war-factory exit (`0x0044DEDD`), an all-Tunnel
+  reinforcement team arriving underground (`sim/team_script_vm/reinforcements.rs`,
+  `0x0065E2D3..0x0065E404`), and the dig tilt and depth drawing
+  (`app/presentation/render_pose.rs` and `instances/foot_depth.rs`,
+  `Draw_Matrix 0x00729B40`, `Z_Adjust 0x00729E50`).
 - Ares: `rules/ares_techno_type.rs` reads the four keys;
   `sim/movement/tunnel_process.rs` plays them (`PlayDigEffects`, Ares.dll
   `0x100443E0`, from hooks `0x728EF0`, `0x7292CF`, `0x7297C4`, `0x7299A9`)
@@ -86,9 +90,7 @@ origin.
 
 ## Not covered
 
-- Reinforcements that arrive underground (`0x0065E010`, an all-Tunnel team)
-  and a Tunnel infantryman's move orders.
-- The dig tilt and depth drawing (`Draw_Matrix 0x00729B40`, `Z_Adjust
-  0x00729E50`); the new Drive's `Force_New_Slope` (`0x00742BE3`).
+- A Tunnel infantryman's move orders.
+- The new Drive's `Force_New_Slope` (`0x00742BE3`).
 - A save during a timed dig phase resumes that phase where native's Load
   restarts it (`0x0072A150`).

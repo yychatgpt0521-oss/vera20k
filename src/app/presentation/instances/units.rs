@@ -1311,7 +1311,7 @@ fn body_draw(
     tilt_crash_jumpjet: bool,
     turret_parts: bool,
 ) -> BodyDraw {
-    if let Some(tilt) = body_pose(entity, band, tilt_crash_jumpjet) {
+    if let Some(tilt) = body_pose(entity, band, binary_frame, tilt_crash_jumpjet) {
         return BodyDraw::Pose(tilt);
     }
     if !turret_parts {
@@ -1333,21 +1333,19 @@ fn body_draw(
 /// Jumpjet Draw_Matrix tilts a `TiltCrashJumpjet=` type whenever either angle
 /// passes its gate (`0x0054DCDA..0x0054DD13`), crashing or not. Rocket
 /// Draw_Matrix (`0x00663470`) pitches the body whenever CurrentPitch is not
-/// zero; at zero it is the plain facing matrix.
+/// zero; at zero it is the plain facing matrix. Tunnel Draw_Matrix
+/// (`0x00729B40`) pitches the same matrix while it digs.
 fn body_pose(
     entity: &crate::sim::game_entity::GameEntity,
     band: EntityDrawBand,
+    binary_frame: u32,
     tilt_crash_jumpjet: bool,
 ) -> Option<crate::render::unit_atlas::PoseTilt> {
     let angles = entity
         .rocking
         .as_ref()
         .map_or([0.; 2], |r| r.angles_native());
-    let pitch = entity
-        .locomotor
-        .as_ref()
-        .and_then(|l| l.rocket_runtime())
-        .map_or(0., |r| r.draw_pitch());
+    let pitch = crate::app::presentation::render_pose::body_pitch(entity, binary_frame);
     body_pose_with_angles(entity, band, tilt_crash_jumpjet, angles, pitch, None, None)
 }
 
@@ -1408,7 +1406,7 @@ fn body_pose_with_angles(
         return Some(tilt);
     }
     let locomotor = entity.locomotor.as_ref()?;
-    if locomotor.rocket_runtime().is_some() {
+    if locomotor.rocket_runtime().is_some() || locomotor.tunnel_runtime().is_some() {
         return (pitch != 0.0).then_some(PoseTilt::Rocket(pitch));
     }
     entity.rocking.as_ref()?;

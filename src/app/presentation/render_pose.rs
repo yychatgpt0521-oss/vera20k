@@ -13,6 +13,7 @@ pub(crate) struct RenderPose {
     /// binary frame, without advancing or duplicating its timer.
     pub fly_bank_direction: Option<crate::sim::movement::facing_class::RotationDirection>,
     pub angles: [f32; 2],
+    /// The Rocket or Tunnel body pitch ([`body_pitch`]).
     pub rocket_pitch: f32,
     pub visual_lift: f32,
     pub recoil: ([f32; 2], bool),
@@ -35,6 +36,22 @@ pub(crate) fn body_draw_facing(entity: &GameEntity, binary_frame: u32) -> u16 {
     } else {
         entity.body_facing_current(binary_frame)
     }
+}
+
+/// The body pitch the Rocket and Tunnel Draw_Matrix share: both rotate the
+/// facing matrix (`0x0055A730`'s RotateZ) about Y (`0x005AF080`). Rocket
+/// (`0x00663470`) negates its CurrentPitch; Tunnel (`0x00729B40`) rotates by
+/// its dig pitch as it is, so it is negated into the same convention.
+pub(crate) fn body_pitch(entity: &GameEntity, binary_frame: u32) -> f32 {
+    let Some(locomotor) = entity.locomotor.as_ref() else {
+        return 0.;
+    };
+    if let Some(rocket) = locomotor.rocket_runtime() {
+        return rocket.draw_pitch();
+    }
+    locomotor
+        .tunnel_runtime()
+        .map_or(0., |tunnel| -tunnel.draw_pitch(binary_frame))
 }
 
 fn fly_bank_direction(
@@ -62,11 +79,7 @@ impl RenderPose {
                 .rocking
                 .as_ref()
                 .map_or([0.; 2], |r| r.angles_native()),
-            rocket_pitch: entity
-                .locomotor
-                .as_ref()
-                .and_then(|l| l.rocket_runtime())
-                .map_or(0., |r| r.draw_pitch()),
+            rocket_pitch: body_pitch(entity, frame),
             visual_lift: f32::from(entity.ion_blast_lift_pixels()),
             recoil: entity.voxel_recoil(),
             slope: crate::sim::movement::slope_transition::state_for_entity(entity)

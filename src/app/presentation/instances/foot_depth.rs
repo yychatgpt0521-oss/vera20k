@@ -344,14 +344,33 @@ fn unit_z_adjust_in_runtime(
     } else {
         None
     };
+    let frame = view.session().binary_frame();
+    let facing = entity.body_facing_current(frame);
+    // Drive 0x4B4870, Ship 0x6A3EA0, and the shared 0x55ABA0 inherited
+    // by Walk/Hover/Fly/Jumpjet/Teleport all return zero at loco slot +0x38;
+    // Tunnel's 0x729E50 pushes a digging object back by its depth under the
+    // floor (AdjustForZ of the floor less AdjustForZ of its Z).
+    let locomotor_z = entity
+        .locomotor
+        .as_ref()
+        .and_then(|locomotor| locomotor.tunnel_runtime())
+        .map_or(0, |tunnel| {
+            let location = crate::sim::movement::ground_pose::object_location(entity, None);
+            let floor = crate::sim::movement::ground_pose::query_ground_height(
+                &crate::map::resolved_terrain::NativeCellQuery::canonical(terrain),
+                location,
+            )
+            .unwrap_or(location.z);
+            let below_ground_px =
+                adjust_for_z_standard(floor).wrapping_sub(adjust_for_z_standard(world_z));
+            tunnel.z_adjust(frame, facing, below_ground_px)
+        });
     let context = FootDepthContext {
         cell: coord,
         on_bridge: entity.on_bridge(),
-        facing_u16: entity.body_facing_current(view.session().binary_frame()),
+        facing_u16: facing,
         world_z_leptons: world_z,
-        // Drive 0x4B4870, Ship 0x6A3EA0, and the shared 0x55ABA0 inherited
-        // by Walk/Hover/Fly/Jumpjet/Teleport all return zero at loco slot +0x38.
-        locomotor_z: 0,
+        locomotor_z,
         bridge_set_base: terrain.concrete_bridge_set_base(),
         unit_special_adjustment: special,
     };
