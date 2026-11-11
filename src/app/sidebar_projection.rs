@@ -1333,6 +1333,8 @@ pub(crate) fn cameo_candidates(
         })
         .collect();
     let mut supers: Vec<_> = supers.iter().collect();
+    #[cfg(feature = "ares")]
+    supers.retain(|item| item.ares_show_cameo);
     supers.sort_by_key(|item| rules.super_weapon_index(sim.interner().resolve(item.type_id)));
     candidates.extend(
         supers

@@ -759,9 +759,11 @@ pub struct SuperWeaponType {
     pub ai_defend_against: bool,
     /// When true, suspension doesn't auto-resume on power restore.
     pub manual_control: bool,
-    /// Phobos `SW.ShowCameo=`, read by `SWTypeExt` for the superweapon
-    /// sidebar's `AddButton` gate. Not the ordinary right-sidebar cameo.
-    #[cfg(feature = "phobos")]
+    /// `SW.ShowCameo=`. Phobos's `SWTypeExt` gates its superweapon sidebar's
+    /// `AddButton` with it; Ares keeps an `SW.AutoFire=yes` type's cameo off
+    /// the ordinary right-sidebar strip
+    /// ([`crate::sim::superweapon::SuperWeaponView::ares_show_cameo`]).
+    #[cfg(any(feature = "ares", feature = "phobos"))]
     pub sw_show_cameo: bool,
     /// Phobos `SuperWeaponSidebar.Allow=`. Unset falls back to
     /// `[AudioVisual] SuperWeaponSidebar.AllowByDefault`.
@@ -1012,7 +1014,7 @@ impl SuperWeaponType {
             flash_sidebar_tab_frames: section.read_int("FlashSidebarTabFrames", -1),
             ai_defend_against: section.read_bool("AIDefendAgainst", false),
             manual_control: section.read_bool("ManualControl", false),
-            #[cfg(feature = "phobos")]
+            #[cfg(any(feature = "ares", feature = "phobos"))]
             sw_show_cameo: section.read_bool("SW.ShowCameo", true),
             #[cfg(feature = "phobos")]
             sw_sidebar_allow: section.read_bool_value("SuperWeaponSidebar.Allow"),

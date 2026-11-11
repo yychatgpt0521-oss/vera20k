@@ -1546,6 +1546,14 @@ pub struct SuperWeaponView {
     /// The select hook's refusal of a press, if any.
     #[cfg(feature = "ares")]
     pub ares_refusal: Option<AresCameoRefusal>,
+    /// Whether the right-sidebar strip shows this super's cameo. Ares
+    /// replaces `HouseClass::UpdateSuperWeaponsOwned` (hook `0x0050AF10`):
+    /// for the player's House it adds the cameo when `SW.ShowCameo` holds and
+    /// skips it when `SW.AutoFire` does, else adds it
+    /// (`0x10039617..0x1003965F`). Mental Omega's Iron Guard is such a
+    /// hidden auto-fire super.
+    #[cfg(feature = "ares")]
+    pub ares_show_cameo: bool,
 }
 
 impl SuperWeaponView {
@@ -1652,6 +1660,11 @@ pub fn superweapon_views_for_owner(
                         .super_weapon_metadata(type_id_str)
                         .is_some_and(|metadata| metadata.charge().unstoppable()),
             ),
+            #[cfg(feature = "ares")]
+            ares_show_cameo: sw_type.sw_show_cameo
+                || !rules
+                    .super_weapon_target_policy(type_id_str)
+                    .is_some_and(|policy| policy.auto_fire()),
         });
     }
     views
