@@ -2845,6 +2845,19 @@ fn finish_simulation_frame(
                         .sidebar_gadget_state
                         .reopen_command_bar_at_match_end(match_decided);
                 }
+                LifecycleOutput::SidebarRecalculated { owner } if Some(owner) == local_house => {
+                    let input = &mut state.match_state.input;
+                    if let Some(rt) = state.match_state.sim_runtime.runtime() {
+                        input.drop_orphan_building_placement(|type_id| {
+                            crate::sim::production::strip_keeps_type(
+                                &rt.simulation,
+                                &rt.resources.rules,
+                                owner,
+                                type_id,
+                            )
+                        });
+                    }
+                }
                 LifecycleOutput::SidebarConstructionOption { .. }
                 | LifecycleOutput::SidebarRecalculated { .. }
                 | LifecycleOutput::ProductionBeginAttempted { .. }
