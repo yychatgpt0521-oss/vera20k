@@ -1429,6 +1429,27 @@ pub(crate) enum SpritePaletteChoice {
     /// The selected successfully loaded extra building palette for the
     /// active theater (`RuleSet::load_extra_building_palette`).
     ExtraBuilding,
+    /// The animation type's loaded Ares `CustomPalette=` file
+    /// ([`art_data::AnimTypeRuntimeConfig::ares_custom_palette_file`]).
+    #[cfg(feature = "ares")]
+    AnimCustom,
+}
+
+/// The Ares `CustomPalette=` file an ordinary AnimClass draw of `key` bakes
+/// against (AnimClass_Draw_SetPalette, hook 0x4232CE -> 1000ACE0). Only the
+/// global ANIM convert is swapped: fogged, tiled, scheme and cell-drawer
+/// contexts keep their own palette.
+#[cfg(feature = "ares")]
+fn anim_custom_palette_file(
+    key: &ShpSpriteKey,
+    art: Option<&ArtRegistry>,
+    theater_ext: &str,
+) -> Option<String> {
+    if key.palette_context != ShpPaletteContext::GlobalAnim {
+        return None;
+    }
+    art?.anim_runtime_config(&key.type_id)?
+        .ares_custom_palette_file(theater_ext)
 }
 
 /// Pick the palette a sprite key's frames are baked against.
@@ -2663,9 +2684,32 @@ pub(crate) fn prepare_sprite_atlas(
             });
         }
     }
+    // A missing CustomPalette file leaves the ANIM.PAL convert.
+    #[cfg(feature = "ares")]
+    let anim_custom_file = |key: &ShpSpriteKey| anim_custom_palette_file(key, art, theater_ext);
+    #[cfg(feature = "ares")]
+    let mut anim_custom_palettes: HashMap<String, Option<Palette>> = HashMap::new();
+    #[cfg(feature = "ares")]
+    for file in new_keys.iter().filter_map(anim_custom_file) {
+        anim_custom_palettes.entry(file).or_insert_with_key(|file| {
+            let palette = asset_manager
+                .get_ref(file)
+                .and_then(|bytes| Palette::from_bytes(bytes).ok());
+            if palette.is_none() {
+                log::warn!("Ares animation CustomPalette {file} is missing; ANIM.PAL stays");
+            }
+            palette
+        });
+    }
     let palette_choices: Vec<SpritePaletteChoice> = new_keys
         .iter()
         .map(|key| {
+            #[cfg(feature = "ares")]
+            if anim_custom_file(key)
+                .is_some_and(|file| anim_custom_palettes.get(&file).is_some_and(Option::is_some))
+            {
+                return SpritePaletteChoice::AnimCustom;
+            }
             let extra_available = match key.palette_context {
                 ShpPaletteContext::ExtraScheme(palette) => interner
                     .and_then(|interner| extra_palettes.get(interner.resolve(palette)))
@@ -2788,6 +2832,16 @@ pub(crate) fn prepare_sprite_atlas(
                     .as_ref()
                     .expect("chosen only when loaded");
                 (palette, name)
+            }
+            #[cfg(feature = "ares")]
+            SpritePaletteChoice::AnimCustom => {
+                let (file, palette) = anim_custom_palettes
+                    .get_key_value(&anim_custom_file(&key).expect("chosen only with a file"))
+                    .expect("chosen only with a loaded file");
+                (
+                    palette.as_ref().expect("chosen only when loaded"),
+                    file.as_str(),
+                )
             }
         };
         // 0x00627590 builds each scheme with ColorScheme's constructor

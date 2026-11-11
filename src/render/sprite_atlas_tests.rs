@@ -1966,6 +1966,29 @@ fn palette_context_preserves_simultaneous_global_cell_and_attached_sprite_keys()
     assert_eq!(probe.palette_row[240 * 4], 240);
 }
 
+/// Ares `CustomPalette=` (Mental Omega's APOCMUZZLE_* muzzle flashes,
+/// MCVMARK) names the ordinary animation draw's palette file, `~~~` standing
+/// for the theater. `AltPalette=yes` still overrides it (0x004232D8 after the
+/// 0x4232CE hook), and the literal ANIM.PAL contexts keep it.
+#[cfg(feature = "ares")]
+#[test]
+fn ares_anim_custom_palette_names_the_theater_file_for_ordinary_draws() {
+    let art = ArtRegistry::from_ini(&crate::rules::ini_parser::IniFile::from_str(
+        "[FLASH]\nCustomPalette=Flash~~~.pal\n\
+         [ALT]\nAltPalette=yes\nCustomPalette=Flash~~~.pal\n[PLAIN]\nRate=1\n",
+    ));
+    let file = |type_id, context| {
+        let mut key = make_shp_key(type_id, 0);
+        key.palette_context = context;
+        anim_custom_palette_file(&key, Some(&art), "tem")
+    };
+    let global = ShpPaletteContext::GlobalAnim;
+    assert_eq!(file("FLASH", global).as_deref(), Some("flashtem.pal"));
+    assert_eq!(file("ALT", global), None);
+    assert_eq!(file("PLAIN", global), None);
+    assert_eq!(file("FLASH", ShpPaletteContext::AnimPalette), None);
+}
+
 /// TechnoClass::DrawSHP: TerrainPalette first (`0x00705EC7`), then
 /// GetRemapColour (`0x00705F81`), whose `+0xDF0` arm takes the extra building
 /// palette. An ExtraScheme anim remap needs only the loaded palette.

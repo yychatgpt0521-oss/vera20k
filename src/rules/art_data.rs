@@ -362,8 +362,8 @@ pub struct AnimTypeRuntimeConfig {
     /// mode): the palette file a nonempty read names, `~~~` standing for
     /// the theater extension (`CustomPalette::LoadFromINI`, 1000A4B0 after
     /// MakeInfantryOwner). AnimClass_Draw_SetPalette (Ares.dll 1000ACE0,
-    /// hook 0x4232CE) draws the anim with it when it loads; the anim atlas
-    /// has no per-type palette, so nothing reads it yet.
+    /// hook 0x4232CE) draws the anim with it when it loads
+    /// ([`Self::ares_custom_palette_file`]).
     #[cfg(feature = "ares")]
     pub(crate) ares_custom_palette: Option<String>,
     /// Phobos `CreateUnit=` + `CreateUnit.Owner` (default `Victim`) +
@@ -1057,6 +1057,22 @@ impl AnimTypeRuntimeConfig {
         }
         self.explicit_end
             .unwrap_or(header_end(shp_frame_count, self.shadow))
+    }
+
+    /// The palette file an ordinary AnimClass draw takes instead of ANIM.PAL:
+    /// Ares `CustomPalette` with its first `~~~` replaced by the theater
+    /// extension (`CustomPalette::LoadFromINI`, Ares.dll 10076160).
+    /// AnimClass_Draw_SetPalette (hook 0x4232CE -> 1000ACE0) swaps only the
+    /// ANIM.PAL convert, so `AltPalette=yes` (0x004232D8) still wins.
+    /// Residual: the Temperate mode's 53 shade levels against TEMPERAT.PAL;
+    /// the atlas bakes the file's colours and lights them like ANIM.PAL.
+    #[cfg(feature = "ares")]
+    pub fn ares_custom_palette_file(&self, theater_ext: &str) -> Option<String> {
+        if self.alt_palette {
+            return None;
+        }
+        let name = self.ares_custom_palette.as_deref()?;
+        Some(name.replacen("~~~", theater_ext, 1).to_ascii_lowercase())
     }
 }
 
