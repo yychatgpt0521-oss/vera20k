@@ -357,6 +357,7 @@ fn draw_status_prefix<'a>(
         bomb_clock,
         wrench,
         rank,
+        rank_insignia,
         background,
         shield_background,
         fills,
@@ -374,7 +375,16 @@ fn draw_status_prefix<'a>(
         //6F5340: MOUSEPAL N1, E00/493DF0 consumes A and bypasses Z.
         batch.draw_passthrough_range(pass, shape.texture(), buffer, *index, 1);
     }
-    if let (Some(index), Some(shape)) = (rank, overlay.pips()) {
+    // A custom insignia rank was cut from its own SHP; binding the PIPS strip
+    // would stretch that whole strip over the insignia's quad.
+    let rank_shape = match rank_insignia {
+        #[cfg(any(feature = "ares", feature = "phobos"))]
+        Some(name) => overlay.insignia_shape(name),
+        #[cfg(not(any(feature = "ares", feature = "phobos")))]
+        Some(_) => None,
+        None => overlay.pips(),
+    };
+    if let (Some(index), Some(shape)) = (rank, rank_shape) {
         batch.draw_passthrough_range(pass, shape.texture(), buffer, *index, rank_count);
     }
     draw_health_bar(
@@ -565,6 +575,7 @@ fn rank_run_end(runs: &[ObjectExtrasRun], start: usize) -> usize {
         bomb_clock: None,
         wrench: None,
         rank: Some(first),
+        rank_insignia: first_insignia,
         background: None,
         shield_background: None,
         fills,
@@ -590,6 +601,7 @@ fn rank_run_end(runs: &[ObjectExtrasRun], start: usize) -> usize {
         bomb_clock: None,
         wrench: None,
         rank: Some(index),
+        rank_insignia,
         background: None,
         shield_background: None,
         fills,
@@ -606,6 +618,7 @@ fn rank_run_end(runs: &[ObjectExtrasRun], start: usize) -> usize {
             || !group_rectangles.is_empty()
             || !group_text.is_empty()
             || *index != *first + (end - start) as u32
+            || rank_insignia != first_insignia
         {
             break;
         }
@@ -613,3 +626,7 @@ fn rank_run_end(runs: &[ObjectExtrasRun], start: usize) -> usize {
     }
     end
 }
+
+#[cfg(test)]
+#[path = "object_extras_tests.rs"]
+mod tests;

@@ -847,6 +847,10 @@ pub struct ObjectType {
     /// the ordered TechnoType reader.
     #[cfg(feature = "phobos")]
     pub phobos_insignia: crate::rules::insignia_type::PhobosInsignia,
+    /// Ares `TechnoTypeExt` insignia keys (`Insignia*`, `InsigniaFrame*`,
+    /// `Insignia.ShowEnemy`), accumulated like the Phobos block above.
+    #[cfg(feature = "ares")]
+    pub ares_insignia: crate::rules::insignia_type::AresInsignia,
     /// Phobos `Passengers.BySize` (`Valueable<bool>`, default yes): the
     /// passenger-count key `DrawInsignia` indexes `Insignia.PassengersN`
     /// with. Its other consumer, the NoQueueUpToEnter admission rewrite, is
@@ -4823,6 +4827,8 @@ impl ObjectType {
             // accumulates these keys over every reached pass.
             #[cfg(feature = "phobos")]
             phobos_insignia: crate::rules::insignia_type::PhobosInsignia::default(),
+            #[cfg(feature = "ares")]
+            ares_insignia: crate::rules::insignia_type::AresInsignia::default(),
             #[cfg(feature = "phobos")]
             phobos_passengers_by_size: section.read_ares_bool("Passengers.BySize", true),
             #[cfg(feature = "phobos")]

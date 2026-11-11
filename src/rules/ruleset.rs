@@ -5184,6 +5184,13 @@ impl RuleSet {
         self.ares_global_controls.general().enemy_wrench()
     }
 
+    /// RulesExt `[General] EnemyInsignia` (constructor true): a player not
+    /// allied with an object's owner sees its rank insignia.
+    #[cfg(feature = "ares")]
+    pub fn ares_enemy_insignia(&self) -> bool {
+        self.ares_global_controls.general().enemy_insignia()
+    }
+
     /// RulesExt `[CrateRules] RandomCrateMoney` (constructor 900).
     #[cfg(feature = "ares")]
     pub(crate) fn ares_random_crate_money(&self) -> i32 {
@@ -5421,6 +5428,16 @@ impl RuleSet {
                 .find(|object| object.category == category && object.id == name)
             {
                 object.phobos_insignia = insignia.clone();
+            }
+        }
+        #[cfg(feature = "ares")]
+        for (category, name, insignia) in processed.techno_ares_insignia_states() {
+            if let Some(object) = rules
+                .object_list
+                .iter_mut()
+                .find(|object| object.category == category && object.id == name)
+            {
+                object.ares_insignia = insignia.clone();
             }
         }
         rules.crate_rules = processed.crate_rules().clone();

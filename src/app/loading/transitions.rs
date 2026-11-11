@@ -373,6 +373,22 @@ pub(crate) fn install_world_presentation(
             assets,
             rules.digital_display_types().types(),
         );
+    }
+    // Ares/Phobos `Insignia` SHPs, retained once per match like the
+    // TechnoTypeExt's SHPStruct pointers.
+    #[cfg(any(feature = "ares", feature = "phobos"))]
+    if let Some(assets) = state.process_assets.manager()
+        && let Some(rules) = state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map(|runtime| &runtime.resources.rules)
+        && let Some(overlay) = state
+            .match_state
+            .match_presentation
+            .selection_overlay
+            .as_mut()
+    {
         overlay.load_insignia_shapes(
             &state.renderer.gpu.device,
             &state.renderer.gpu.queue,
