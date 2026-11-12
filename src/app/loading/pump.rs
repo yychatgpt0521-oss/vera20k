@@ -34,6 +34,7 @@ use crate::app::loading::fresh_scenario::FreshScenarioLoadContextDescriptor;
 use crate::app::loading::init::{self, MapLoadInitial, MapLoadResult};
 use crate::app::loading::progress_row::LoadingProgressRowSnapshot;
 use crate::app::match_bootstrap::{LoadingStartup, PreparedMatchStartup};
+use crate::app::match_runtime::sim_host::SimWrite;
 use crate::assets::asset_manager::AssetManager;
 use crate::assets::pal_file::Color;
 use crate::assets::pcx_file::PcxFile;
@@ -940,6 +941,8 @@ impl NativeLoadingScreenState {
         }
         // Ares1002F8F0 publishes this signed index once for the loading
         // attempt; negative resumes the stock side-color branch above.
+        // GetSideColor642B60's hook (0x642B91, 1002F870) follows its
+        // observer LightGrey test, and an observer publishes no Country here.
         #[cfg(feature = "ares")]
         if let Some(text_rgb) = self
             .early_country_loading
@@ -1789,7 +1792,7 @@ fn pump_loading_after_present(
                 state
                     .match_state
                     .sim_runtime
-                    .as_mut()
+                    .write_sim(SimWrite::Lifecycle)
                     .map(|runtime| &mut runtime.simulation),
                 session,
                 false,
@@ -1905,7 +1908,7 @@ fn pump_loading_after_present(
         };
         if !initial.has_generated_rules()
             && should_retire_outgoing
-            && let Some(runtime) = state.match_state.sim_runtime.as_mut()
+            && let Some(runtime) = state.match_state.sim_runtime.write_sim(SimWrite::Lifecycle)
         {
             crate::app::process_assets::transfer_outgoing_simulation_rules(
                 native_rules_owner,
@@ -2680,7 +2683,7 @@ fn prepare_scenario_initial_before_first_frame(state: &mut AppState) -> anyhow::
         state
             .match_state
             .sim_runtime
-            .as_mut()
+            .write_sim(SimWrite::Lifecycle)
             .map(|runtime| &mut runtime.simulation),
         session,
         true,
@@ -2949,8 +2952,6 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
             .ok_or_else(|| anyhow::anyhow!("campaign loading lost its asset manager"))?;
         let mut metadata = crate::rules::campaign_loading::CampaignLoadingMetadata::default();
         let mut names = state.match_state.campaign_names.clone();
-        #[cfg(feature = "ares")]
-        let mut ares_text_rgb = None;
         let csf = state.process_assets.csf.as_ref().ok_or_else(|| {
             anyhow::anyhow!("campaign loading requires the initialized CSF table")
         })?;
@@ -2972,19 +2973,19 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
                 .scenario();
             metadata.apply_ini(&selected.ini, scenario);
             names.apply_ini(&selected.ini, scenario, csf);
-            #[cfg(feature = "ares")]
-            {
-                let name = crate::rules::campaign_loading::ares_load_screen_text_color(
-                    &selected.ini,
-                    scenario,
-                );
-                ares_text_rgb = state.rules().and_then(|rules| {
-                    scheme_entry_by_name(&rules.color_schemes, &name)
-                        .and_then(|entry| scheme_hsv_by_entry(&rules.color_schemes, entry))
-                        .map(|hsv| normalize_rgb(hsv_to_rgb(hsv)))
-                });
-            }
         }
+        // Ares ProgressScreenClass_GetLoadTextColor (1002F870, hook
+        // 0x642B36) colours the campaign title and briefing with the scheme
+        // CacheSP (1002F680, hook 0x686D7F) found, where Get_Side_ColorScheme
+        // 0x642B30 picks AlliedLoad/SovietLoad by Campaign.CD; no scheme of
+        // that name keeps the stock colour.
+        #[cfg(feature = "ares")]
+        let ares_text_rgb = state.rules().and_then(|rules| {
+            let schemes = &rules.color_schemes;
+            scheme_entry_by_name(schemes, metadata.load_text_color())
+                .and_then(|entry| scheme_hsv_by_entry(schemes, entry))
+                .map(|hsv| normalize_rgb(hsv_to_rgb(hsv)))
+        });
         let presentation = super::campaign_presentation::CampaignLoadingPresentation::new(
             &metadata,
             csf,
@@ -3014,11 +3015,11 @@ pub(crate) fn ensure_native_loading_atlas(state: &mut AppState) -> anyhow::Resul
             .as_mut()
             .and_then(|session| session.native.as_mut())
             .expect("campaign native session");
+        native.campaign_presentation = Some(presentation);
         #[cfg(feature = "ares")]
         if let Some(text_rgb) = ares_text_rgb {
             native.text_rgb = text_rgb;
         }
-        native.campaign_presentation = Some(presentation);
         native.campaign_names = Some(names);
         native.atlas = atlas;
         log::info!("Native campaign loading atlas ready");

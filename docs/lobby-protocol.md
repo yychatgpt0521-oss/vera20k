@@ -144,6 +144,9 @@ Commands and their payloads:
 | `ladder` | `{names:[name]}` |
 
 HostOptions is `{launch,map_metadata,vacancies,observer_row,cooperative_difficulty,seed}`.
+A slot's `color_index` is 0 to 7 for the original colours, 8 for an observer and 9 to 30
+for the game's [extra lobby colours](skirmish-colors.md); the lobby passes 0 to 255 on
+unchanged.
 Generated maps add `random_map:{start_staging,preview:{source_sha256,byte_length}}`.
 Cooperative rooms add `cooperative_campaign`, the host's campaign record as the game's
 `C0` text (at most 512 bytes, starting `C0,`); a guest applies it before the options
@@ -526,6 +529,9 @@ otherwise on the next public-channel join.
 A session that still joins a game room from another version, through a buddy's game or
 its name, makes every member hear a `chat` line from the notice sender naming both
 versions.
+The same line, with both full `version` agreement strings, goes to the room once when
+a member's `ready` or `map_status` names another build of the host's version, since
+such a room cannot start.
 
 Each `join` of the public channel gives the joining session one `chat` line from the
 notice sender after its `joined`. The line says how many players are online: in the
