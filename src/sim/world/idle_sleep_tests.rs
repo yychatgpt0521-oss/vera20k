@@ -93,6 +93,26 @@ fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     assert!(sim.idle_sleep_counts().1 > 200);
 }
 
+/// `VERA20K_IDLE_SLEEP`: unset sleeps, `0` stays awake, `check` sleeps and
+/// checks, so a played match can prove sleeping changed nothing.
+#[test]
+fn the_match_setting_check_sleeps_and_checks() {
+    let rules = rules();
+    let (mut sim, _) = power_plant(&rules, false);
+    for (setting, on, checking) in [
+        (None, true, false),
+        (Some("0"), false, false),
+        (Some("check"), true, true),
+    ] {
+        sim.sleep_idle_objects_as(setting.map(std::ffi::OsStr::new));
+        assert_eq!(
+            (sim.idle_sleep.is_on(), sim.idle_sleep.is_checking()),
+            (on, checking),
+            "VERA20K_IDLE_SLEEP={setting:?}"
+        );
+    }
+}
+
 #[test]
 fn a_write_wakes_a_sleeper_with_its_owed_visits() {
     let rules = rules();
