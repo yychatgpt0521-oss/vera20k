@@ -987,8 +987,7 @@ impl Simulation {
                 )
             });
         let quiet = |sim: &Simulation| entered_quiet && sim.quiet(stable_id);
-        #[cfg(debug_assertions)]
-        if entered_quiet {
+        if entered_quiet && (cfg!(debug_assertions) || sim.idle_sleep.is_checking()) {
             sim.check_quiet(stable_id, rules);
         }
         let _building_area = was_structure

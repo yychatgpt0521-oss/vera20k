@@ -20,8 +20,9 @@
 //!
 //! Only Units are marked, and only in builds without the Ares or Phobos
 //! capability, whose per-visit steps are not sorted. Idle sleeping's switch
-//! turns it on and off ([`Simulation::sleep_idle_objects`]). A debug build
-//! checks [`rests`] at the start of every quiet turn.
+//! turns it on and off ([`Simulation::sleep_idle_objects`]). A debug build,
+//! or a sleep check ([`Simulation::check_idle_sleep`]), checks [`rests`] at
+//! the start of every quiet turn.
 
 use super::Simulation;
 use crate::map::entities::EntityCategory;
@@ -59,8 +60,8 @@ impl Simulation {
         }
     }
 
-    /// Debug builds: a quiet unit still rests as [`rests`] asks.
-    #[cfg(debug_assertions)]
+    /// Debug builds and a sleep check: a quiet unit still rests as [`rests`]
+    /// asks.
     pub(super) fn check_quiet(&self, id: u64, rules: &RuleSet) {
         if !self.quiet(id) {
             return;

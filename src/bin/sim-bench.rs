@@ -72,7 +72,8 @@
 //! Idle objects sleep as in a real match (`sim::world::idle_sleep`):
 //! `--no-sleep` runs every turn, which must give the same hashes, and
 //! `--sleep-check` runs every turn sleeping would skip and stops if one
-//! changed anything. The summary prints how many visits were counted.
+//! changed anything (a match does so under `VERA20K_IDLE_SLEEP=check`). The
+//! summary prints how many visits were counted.
 //!
 //! The simulation batches its path searches and target scans as a real
 //! match does; `--serial-paths` searches and `--serial-scans` scans in native
