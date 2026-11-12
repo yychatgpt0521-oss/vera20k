@@ -382,7 +382,7 @@ pub(crate) fn install_world_presentation(
         && let Some(rules) = state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .map(|runtime| &runtime.resources.rules)
         && let Some(overlay) = state
             .match_state
