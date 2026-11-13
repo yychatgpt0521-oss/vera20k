@@ -787,6 +787,7 @@ mod tests {
                 dir.path(),
                 mod_dir.as_deref(),
                 MediaArchiveMode::STOCK_DIGITAL,
+                crate::assets::asset_manager::ArchiveFamily::Yr,
             )
             .unwrap();
             process.initialize_sources_if_needed(&assets).unwrap();
