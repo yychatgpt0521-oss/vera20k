@@ -56,6 +56,9 @@ const SLEEP_CAP_FRAMES: u32 = 64;
 pub(crate) struct IdleSleep {
     on: bool,
     check: bool,
+    /// While checking, compare the state hash on every this-many checked
+    /// visits (1, every one, unless set otherwise).
+    hash_every: u64,
     /// Visits counted instead of run (or, when checking, run and compared).
     counted: u64,
 }
@@ -73,8 +76,9 @@ pub(super) enum SleepVisit {
 /// A sleeper's state before a checked turn.
 pub(super) struct SleepCheck {
     expected: serde_json::Value,
-    /// The state hash's parts with the visit counted.
-    hash: [(&'static str, u64); 30],
+    /// The state hash's parts with the visit counted, on a visit that
+    /// compares them.
+    hash: Option<[(&'static str, u64); 30]>,
     scenario_rng: u64,
     main_rng: u64,
     logic_len: usize,
@@ -92,6 +96,12 @@ impl IdleSleep {
     pub(super) fn is_checking(&self) -> bool {
         self.check
     }
+
+    /// While checking, how many checked visits pass between two state hash
+    /// comparisons.
+    pub(super) fn hash_every(&self) -> u64 {
+        self.hash_every.max(1)
+    }
 }
 
 impl Simulation {
@@ -108,7 +118,10 @@ impl Simulation {
     /// [`Self::sleep_idle_objects`] as a match starts, as the environment
     /// variable `VERA20K_IDLE_SLEEP` says: `0` rules sleeping out of a fault
     /// report, `check` sleeps and checks ([`Self::check_idle_sleep`]) so a
-    /// played match proves sleeping changed nothing.
+    /// played match proves sleeping changed nothing, and `check:N` compares
+    /// the state hash only on every Nth checked visit
+    /// ([`Self::check_idle_sleep_hashing_every`]): on a map with thousands of
+    /// sleepers hashing the world twice per visit takes seconds a frame.
     pub fn sleep_idle_objects_in_match(&mut self) {
         self.sleep_idle_objects_as(std::env::var_os("VERA20K_IDLE_SLEEP").as_deref());
     }
@@ -116,7 +129,22 @@ impl Simulation {
     /// [`Self::sleep_idle_objects_in_match`] for the variable's value.
     pub(super) fn sleep_idle_objects_as(&mut self, setting: Option<&std::ffi::OsStr>) {
         self.sleep_idle_objects(setting.is_none_or(|value| value != "0"));
-        self.check_idle_sleep(setting.is_some_and(|value| value == "check"));
+        let check = setting.and_then(|value| value.to_str()).and_then(|value| {
+            match value.strip_prefix("check") {
+                Some("") => Some(1),
+                Some(every) => every.strip_prefix(':')?.parse::<u64>().ok(),
+                None => None,
+            }
+        });
+        self.check_idle_sleep(check.is_some());
+        self.check_idle_sleep_hashing_every(check.unwrap_or(1));
+    }
+
+    /// While checking, compare the state hash's parts only on every
+    /// `every`th checked visit (0 counts as 1); the object, both streams and
+    /// the object lists are compared on every one.
+    pub fn check_idle_sleep_hashing_every(&mut self, every: u64) {
+        self.idle_sleep.hash_every = every;
     }
 
     /// Run every turn sleeping would skip and panic if it changed anything
@@ -177,9 +205,12 @@ impl Simulation {
                 .fit_to_sleep(id, frame.wrapping_sub(1));
             // The state hash folds owed visits, so with this one counted it
             // is the hash the turn must leave.
-            self.substrate.entities.owe_visit(id);
-            let hash = self.state_hash_owners();
-            self.substrate.entities.forget_owed(id);
+            let hash = (self.idle_sleep.counted % self.idle_sleep.hash_every() == 0).then(|| {
+                self.substrate.entities.owe_visit(id);
+                let hash = self.state_hash_owners();
+                self.substrate.entities.forget_owed(id);
+                hash
+            });
             let expected = self
                 .substrate
                 .entities
@@ -244,13 +275,14 @@ impl Simulation {
             (check.logic_len, check.entities),
             "idle sleep: {name:?} {id} changed the object lists on frame {frame}"
         );
-        let hash = self.state_hash_owners();
-        let changed: Vec<&str> = hash
-            .iter()
-            .zip(&check.hash)
-            .filter(|(after, before)| after != before)
-            .map(|((owner, _), _)| *owner)
-            .collect();
+        let changed: Vec<&str> = check.hash.map_or_else(Vec::new, |before| {
+            self.state_hash_owners()
+                .iter()
+                .zip(&before)
+                .filter(|(after, before)| after != before)
+                .map(|((owner, _), _)| *owner)
+                .collect()
+        });
         if after.as_ref() != Some(&check.expected) {
             let differing: Vec<String> = match (&after, &check.expected) {
                 (Some(serde_json::Value::Object(after)), serde_json::Value::Object(before)) => {

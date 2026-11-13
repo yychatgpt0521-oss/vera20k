@@ -94,20 +94,26 @@ fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
 }
 
 /// `VERA20K_IDLE_SLEEP`: unset sleeps, `0` stays awake, `check` sleeps and
-/// checks, so a played match can prove sleeping changed nothing.
+/// checks, so a played match can prove sleeping changed nothing; `check:N`
+/// compares the state hash on every Nth checked visit only.
 #[test]
 fn the_match_setting_check_sleeps_and_checks() {
     let rules = rules();
     let (mut sim, _) = power_plant(&rules, false);
-    for (setting, on, checking) in [
-        (None, true, false),
-        (Some("0"), false, false),
-        (Some("check"), true, true),
+    for (setting, on, checking, hash_every) in [
+        (None, true, false, 1),
+        (Some("0"), false, false, 1),
+        (Some("check"), true, true, 1),
+        (Some("check:64"), true, true, 64),
     ] {
         sim.sleep_idle_objects_as(setting.map(std::ffi::OsStr::new));
         assert_eq!(
-            (sim.idle_sleep.is_on(), sim.idle_sleep.is_checking()),
-            (on, checking),
+            (
+                sim.idle_sleep.is_on(),
+                sim.idle_sleep.is_checking(),
+                sim.idle_sleep.hash_every()
+            ),
+            (on, checking, hash_every),
             "VERA20K_IDLE_SLEEP={setting:?}"
         );
     }
