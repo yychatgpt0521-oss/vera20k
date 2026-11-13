@@ -255,9 +255,16 @@ impl SimHost {
     fn report_early_returns(&mut self) {
         if self.lent_jobs > 0 {
             let costs = self.snapshot_costs.take();
+            // How many objects sleep now, and how many visits sleeping has
+            // counted instead of run (`sim::world::idle_sleep`).
+            let (asleep, counted) = self
+                .runtime
+                .as_ref()
+                .map_or((0, 0), |runtime| runtime.simulation.idle_sleep_counts());
             log::info!(
                 "Simulation thread: {} of the last {} ticks were taken back early; \
-                 frame capture {:.3} ms mean over {}, world copy {:.3} ms mean over {}",
+                 frame capture {:.3} ms mean over {}, world copy {:.3} ms mean over {}; \
+                 idle sleep: {asleep} asleep, {counted} visits counted",
                 self.early_returns,
                 self.lent_jobs,
                 costs.capture_ms(),
