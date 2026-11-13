@@ -41,6 +41,10 @@ pub(super) fn activate(
         launch.battery_keep_online(),
         launch.battery_overpower(),
     );
+    // A sleeping building reads the lists only in a turn
+    // (`world::idle_sleep`): Battery.KeepOnline in its operational state,
+    // Battery.Overpower in its Tesla charge.
+    sim.substrate.entities.wake_all();
 }
 
 /// SW_Battery::Deactivate `0x1006EC40`: the reverse of [`activate`], each
@@ -62,4 +66,6 @@ pub(super) fn deactivate(
         launch.battery_keep_online(),
         launch.battery_overpower(),
     );
+    // As [`activate`] does: sleepers read the lists only in a turn.
+    sim.substrate.entities.wake_all();
 }

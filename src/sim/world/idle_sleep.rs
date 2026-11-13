@@ -29,9 +29,11 @@
 //! It marks plain buildings (no weapon, factory, super weapon, occupants or
 //! sound of their own, at full health, on Guard) and standing infantry (on
 //! Guard or Area Guard, at full health, standing ready with no target,
-//! order or fear). Everything else stays awake. A game where an extension
-//! plays marks nothing ([`Simulation::extension_steps_unsorted`]): its
-//! per-visit steps are not sorted yet.
+//! order or fear). Everything else stays awake. A build with Phobos marks
+//! nothing ([`Simulation::extension_steps_unsorted`]): its per-visit steps
+//! are not sorted yet. Where Ares plays a building is marked only when the
+//! steps Ares adds to its visit rest ([`Simulation::ares_steps_rest`]), and
+//! no infantry yet.
 //! In a campaign `TechnoClass` vt+0x4A0's shroud prelude runs every visit
 //! and tests the player's shroud until the object is discovered: an
 //! undiscovered sleeper is asked at each visit whether the shroud still
@@ -338,6 +340,41 @@ impl Simulation {
         }
     }
 
+    /// Whether the steps Ares adds to building `entity`'s visit
+    /// return on its own type and state (Ares.dll's TechnoClass_Update
+    /// `1004B320` and Building Update hooks): no surface conversion
+    /// (`1004B348`), no PoweredBy source to scan (`1006A6F0`), no radar
+    /// jammer (`RadarJamRadius`), no sensor array (`10016E30`), no firestorm
+    /// wall (`10014B40`), no Ares ProduceCash timer (hook `0x43FD2C`), nothing
+    /// attached or to attach (`1004B434`), no bounty sum to show
+    /// (`10044490`), no silo whose stage reads the House's Ares storage
+    /// ledger (`SiloDamage=`, which a deposit changes without writing the
+    /// silo) and no round to reload by the Ares Reload clock (`100478E0`).
+    /// The EMP countdown and recovery, the driver and the deactivated-unit
+    /// steps find nothing in a building the rest of the rule admits. A game
+    /// where Ares does not play has none of these steps.
+    pub(super) fn ares_steps_rest(
+        &self,
+        entity: &crate::sim::game_entity::GameEntity,
+        object: &ObjectType,
+        rules: &RuleSet,
+    ) -> bool {
+        !rules.ares()
+            || (object.surface_conversion(true).is_none()
+                && object.surface_conversion(false).is_none()
+                && object.cloak_power().powered_by().is_empty()
+                && object.cloak_power().radar_jam_radius() == 0
+                && !object.sensor_array
+                && !object.building_type_ext().firestorm_wall
+                && !crate::sim::credit_income::ares_produces_cash(&self.interner, entity, rules)
+                && entity.ares_attach_effects_rest()
+                && !entity.ares.bounty_display.is_pending()
+                && (object.storage == 0 || !object.silo_damage(rules))
+                && entity
+                    .ammo()
+                    .is_none_or(|ammo| ammo.current() >= object.ammo))
+    }
+
     /// What a sleeping building reads of its owner every visit
     /// (`BuildingClass::IsPowerOnline @ 0x004555D0`, through
     /// [`Simulation::building_operational_state`]): full power, a blackout
@@ -351,9 +388,11 @@ impl Simulation {
     }
 
     /// Whether an extension's per-visit steps, which this module has not
-    /// sorted, can run in this game: Ares plays, or the build carries Phobos.
-    pub(super) fn extension_steps_unsorted(&self, rules: &RuleSet) -> bool {
-        rules.ares() || crate::rules::PHOBOS_ENABLED
+    /// sorted, can run in this game: the build carries Phobos. Ares's are
+    /// sorted: [`Self::ares_steps_rest`] for a building, `quiet_units::rests`
+    /// for a Unit.
+    pub(super) fn extension_steps_unsorted(&self, _rules: &RuleSet) -> bool {
+        crate::rules::PHOBOS_ENABLED
     }
 
     /// The frame plain idle building `id` may sleep until and its owner
@@ -390,7 +429,8 @@ impl Simulation {
             && !object.gate
             && !object.cloakable
             && object.powers_unit.is_none()
-            && object.produce_cash_amount == 0;
+            && object.produce_cash_amount == 0
+            && self.ares_steps_rest(entity, object, rules);
         if !plain {
             return None;
         }
@@ -498,7 +538,7 @@ impl Simulation {
     /// checked at each visit ([`Self::infantry_disturbed`]).
     fn infantry_sleep(&self, id: u64, rules: &RuleSet) -> Option<(u32, u8)> {
         use crate::sim::movement::infantry_action::{DO_GUARD, DO_READY};
-        if self.extension_steps_unsorted(rules) {
+        if self.extension_steps_unsorted(rules) || rules.ares() {
             return None;
         }
         let entity = self

@@ -94,3 +94,22 @@ fn a_quiet_tank_matches_its_twin_frame_by_frame() {
         "frames the tank ended quiet, before and after the write: {quiet_turns:?}"
     );
 }
+
+/// Ares `AirRate` steps an airborne Foot's body counter on its own cadence,
+/// whatever the unit does (FootClass_Update_AnimRate `100493D0`): a type
+/// with one never goes quiet, since the quiet turn skips that counter.
+#[test]
+fn an_ares_air_rate_type_stays_loud() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n0=MTNK\n[AircraftTypes]\n\
+         [BuildingTypes]\n\n\
+         [MTNK]\nStrength=300\nArmor=heavy\nSpeed=6\nROT=5\nTurret=yes\nSight=6\nAirRate=3\n",
+    ))
+    .expect("air rate rules parse");
+    let (mut sim, grid) = tank(&rules, true);
+    for _ in 0..120 {
+        tick(&mut sim, &rules, &grid);
+        assert!(!sim.quiet(1), "an AirRate type stays loud");
+    }
+}

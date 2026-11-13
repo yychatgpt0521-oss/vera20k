@@ -19,10 +19,13 @@
 //! this module where it asks.
 //!
 //! Only Units are marked, and only where no extension's unsorted per-visit
-//! steps can run ([`Simulation::extension_steps_unsorted`]). Idle sleeping's
-//! switch turns it on and off ([`Simulation::sleep_idle_objects`]). A debug
-//! build, or a sleep check ([`Simulation::check_idle_sleep`]), checks
-//! [`rests`] at the start of every quiet turn.
+//! steps can run ([`Simulation::extension_steps_unsorted`]). The steps a
+//! quiet turn skips have two Ares arms, both in [`rests`]: the cloak producer
+//! (`rules.ares()`) and the `AirRate` body counter. The steps Ares adds run
+//! on a quiet turn as on any other. Idle sleeping's switch turns it on and
+//! off ([`Simulation::sleep_idle_objects`]). A debug build, or a sleep check
+//! ([`Simulation::check_idle_sleep`]), checks [`rests`] at the start of every
+//! quiet turn.
 
 use super::Simulation;
 use crate::map::entities::EntityCategory;
@@ -105,8 +108,11 @@ pub(crate) fn rests(
         && !object.is_gattling
         && !object.turret_spins
         // FootClass::AI's body counter (`0x004DA886..0x004DAA01`): no idle
-        // frames to count.
+        // frames to count, and no Ares `AirRate`, which steps an airborne
+        // Foot's counter whatever it does (FootClass_Update_AnimRate
+        // `100493D0`, hook `0x4DA8B2`).
         && object.idle_rate == 0
+        && (!ares || object.techno_combat().movement().air_rate() == 0)
         && !object.deploy_to_land
         // The fire visit again: no target and no NavCom.
         && entity.attack_target.target().is_none()

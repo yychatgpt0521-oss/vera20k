@@ -162,6 +162,46 @@ fn a_resting_buildings_turn_writes_nothing() {
     );
 }
 
+/// An Ares build sleeps a plain building, but one whose Ares per-visit step
+/// has work stays awake: a `SensorArray=` building, whose array the
+/// Building Update hook re-checks every visit (Ares.dll `10016E30`).
+#[test]
+fn an_ares_sensor_array_stays_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nSensorArray=yes\n",
+    ))
+    .expect("sensor array rules parse");
+    let (mut sim, grid) = power_plant(&rules, true);
+    for _ in 0..120 {
+        tick(&mut sim, &rules, &grid);
+    }
+    assert_eq!(sim.idle_sleep_counts(), (0, 0));
+}
+
+/// The Ares Reload clock (BuildingClass_Update_Reload `100478E0`) reloads a
+/// building's rounds by its own timer: one with a round to reload stays
+/// awake until its count is full.
+#[test]
+fn an_ares_building_with_a_round_to_reload_stays_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nAmmo=5\nInitialAmmo=0\nReload=400\n",
+    ))
+    .expect("reload rules parse");
+    let (mut sim, grid) = power_plant(&rules, true);
+    for _ in 0..120 {
+        tick(&mut sim, &rules, &grid);
+    }
+    assert_eq!(sim.idle_sleep_counts(), (0, 0));
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();

@@ -287,6 +287,19 @@ fn add_produce_cash_display(
     }
 }
 
+/// Whether [`produce_cash_step`] steps a timer for `entity`: its type or an
+/// upgrade has a `ProduceCashDelay` (hook `0x43FD2C`).
+pub(crate) fn ares_produces_cash(
+    interner: &StringInterner,
+    entity: &crate::sim::game_entity::GameEntity,
+    rules: &RuleSet,
+) -> bool {
+    ares_cash_types(interner, entity, rules)
+        .iter()
+        .flatten()
+        .any(|kind| kind.produce_cash_delay > 0)
+}
+
 /// Ares 3.0 BuildingClass_ChangeOwnership_ProduceCash (10013D40, hook
 /// 0x4482BD), which replaces the startup payout inside the stock old-owner
 /// `MultiplayPassive` test (`0x004482AA..0x004482BC`, to `0x004482FC`): the
@@ -448,17 +461,13 @@ fn ares_produce_cash_step(sim: &mut Simulation, stable_id: u64, rules: &RuleSet)
     if entity.category() != EntityCategory::Structure {
         return;
     }
-    let owner = entity.owner();
-    let types = ares_cash_types(&sim.interner, entity, rules);
     // A building none of whose types produces cash has no timer to step:
     // it is not handed out for writing (VERA-only; the same results).
-    if types
-        .iter()
-        .flatten()
-        .all(|kind| kind.produce_cash_delay <= 0)
-    {
+    if !ares_produces_cash(&sim.interner, entity, rules) {
         return;
     }
+    let owner = entity.owner();
+    let types = ares_cash_types(&sim.interner, entity, rules);
     let frame = sim.session.binary_frame() as i32;
     let mut amount = 0_i32;
     let Some(entity) = sim.substrate.entities.get_mut(stable_id) else {
