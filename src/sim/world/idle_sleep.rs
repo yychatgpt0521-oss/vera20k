@@ -451,7 +451,6 @@ impl Simulation {
             && !object.unit_reload
             && !object.refinery
             && !object.infantry_absorb
-            && !object.overpowerable
             && !object.gap_generator
             && !object.gate
             && !object.cloakable
@@ -528,6 +527,9 @@ impl Simulation {
             && entity.passenger_role.occupants().is_empty()
             && !entity.berserk.is_active()
             && !entity.deactivated.is_offline()
+            // An Overpowerable building's charge sample (`0x004400F9..
+            // 0x00440196`) reads its chargers, each added by a write to it:
+            // with none it holds what it last stored.
             && entity.building.tesla_charge.chargers().is_empty()
             && entity.drain.draining_me().is_none()
             && entity.drain.target().is_none()

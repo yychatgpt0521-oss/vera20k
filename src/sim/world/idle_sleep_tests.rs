@@ -202,7 +202,8 @@ fn an_ares_building_with_a_round_to_reload_stays_awake() {
     assert_eq!(sim.idle_sleep_counts(), (0, 0));
 }
 
-/// An armed defense without a turret sleeps between its own timers: its
+/// An armed defense without a turret, Overpowerable with no charger, sleeps
+/// between its own timers: its
 /// Guard handler's AARate re-arm with its Scenario draw
 /// (`BuildingClass::Mission_Guard @ 0x004496B0`) and its passive scan
 /// (`TechnoClass::AI_Update @ 0x006FA65A`) run on the frames they would
@@ -215,7 +216,7 @@ fn an_armed_defense_sleeps_between_its_guard_and_scan_timers() {
          [InfantryTypes]\n[AircraftTypes]\n[VehicleTypes]\n0=MTNK\n\
          [BuildingTypes]\n0=GAPILL\n\n\
          [GAPILL]\nStrength=400\nArmor=wood\nFoundation=1x1\nSight=6\n\
-         HasStupidGuardMode=no\nPrimary=105mm\n\n\
+         HasStupidGuardMode=no\nPrimary=105mm\nOverpowerable=yes\n\n\
          [MTNK]\nLocomotor={4A582741-9839-11d1-B709-00A024DDAFD1}\n\
          Strength=300\nArmor=heavy\nSpeed=6\nSight=10\n\n\
          [105mm]\nDamage=65\nROF=50\nRange=5\nWarhead=AP\n\n\
