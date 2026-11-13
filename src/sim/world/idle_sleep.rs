@@ -26,8 +26,10 @@
 //! ends with (the sound prefix, pending overlay Recalcs) still runs at its
 //! slot. The state hash and the save form read a sleeper as settled.
 //!
-//! It marks plain buildings (no weapon, factory, super weapon, occupants or
-//! sound of their own, at full health, on Guard) and standing infantry (on
+//! It marks plain buildings (no factory, super weapon, occupants, turret or
+//! ambient sound of their own, at full health, on Guard; armed ones sleep
+//! until their Guard or scan timer, and a working sound is re-driven at the
+//! sleeper's slot) and standing infantry (on
 //! Guard or Area Guard, at full health, standing ready with no target,
 //! order or fear). Everything else stays awake. A build with Phobos marks
 //! nothing ([`Simulation::extension_steps_unsorted`]): its per-visit steps
@@ -241,6 +243,13 @@ impl Simulation {
             }));
         }
         self.substrate.entities.owe_visit(id);
+        // A sleeping building's operational state is unchanged, and
+        // `BuildingClass::Update`'s unchanged branch re-drives its working
+        // sound's handle at its Location every visit (`0x0043FBF7..
+        // 0x0043FC34`): the client's audio, not the world, kept here.
+        if self.substrate.entities.category_of(id) == Some(EntityCategory::Structure) {
+            self.update_building_working_sound(id, rules, effects);
+        }
         // What every turn ends with for the world, at this slot as before:
         // the sound prefix (`FootClass::AI`'s edge sounds) and the commit
         // that publishes pending overlay Recalcs and smudge dirt.
@@ -438,8 +447,6 @@ impl Simulation {
             && !crate::sim::game_entity::GameEntity::charges_turret(object)
             && !object.can_be_occupied
             && object.ambient_sound.is_none()
-            && object.working_sound.is_none()
-            && object.not_working_sound.is_none()
             && !object.unit_repair
             && !object.unit_reload
             && !object.refinery
