@@ -32,8 +32,11 @@
 //! order or fear). Everything else stays awake. A game where an extension
 //! plays marks nothing ([`Simulation::extension_steps_unsorted`]): its
 //! per-visit steps are not sorted yet.
-//! A campaign marks nothing either (`TechnoClass` vt+0x4A0's shroud prelude
-//! runs every visit there).
+//! In a campaign `TechnoClass` vt+0x4A0's shroud prelude runs every visit
+//! and tests the player's shroud until the object is discovered: an
+//! undiscovered sleeper is asked at each visit whether the shroud still
+//! covers it (`Simulation::shroud_prelude_discovers`) and wakes when it
+//! does not.
 //!
 //! [`Simulation::check_idle_sleep`] runs every turn the pass would skip and
 //! panics if it changed anything but the owed counters: the object, the
@@ -183,6 +186,14 @@ impl Simulation {
         let frame = self.session.binary_frame();
         let sleeps_on = frame < wake_at
             && !self.unit_voice_visit_interest.contains(&id)
+            // Nothing tells a sleeper that the shroud over it lifted: the
+            // campaign prelude of `TechnoClass` vt+0x4A0 would promote it
+            // this visit, so each visit asks.
+            && self
+                .substrate
+                .entities
+                .get(id)
+                .is_some_and(|entity| !self.shroud_prelude_discovers(entity))
             && match self.substrate.entities.category_of(id) {
                 Some(EntityCategory::Structure) => self
                     .substrate
@@ -348,10 +359,15 @@ impl Simulation {
     /// The frame plain idle building `id` may sleep until and its owner
     /// note, or `None` to stay awake.
     fn building_sleep(&self, id: u64, rules: &RuleSet) -> Option<(u32, u8)> {
-        if self.extension_steps_unsorted(rules) || !self.session.game_mode_nonzero() {
+        if self.extension_steps_unsorted(rules) {
             return None;
         }
-        let entity = self.substrate.entities.get(id)?;
+        let entity = self
+            .substrate
+            .entities
+            .get(id)
+            // Not one vt+0x4A0's campaign shroud prelude promotes now.
+            .filter(|entity| !self.shroud_prelude_discovers(entity))?;
         let object = self.interner.object_type(entity.type_ref(), rules)?;
         // The type: every step its visit runs returns on the building's own
         // state or on the owner's power.
@@ -482,10 +498,15 @@ impl Simulation {
     /// checked at each visit ([`Self::infantry_disturbed`]).
     fn infantry_sleep(&self, id: u64, rules: &RuleSet) -> Option<(u32, u8)> {
         use crate::sim::movement::infantry_action::{DO_GUARD, DO_READY};
-        if self.extension_steps_unsorted(rules) || !self.session.game_mode_nonzero() {
+        if self.extension_steps_unsorted(rules) {
             return None;
         }
-        let entity = self.substrate.entities.get(id)?;
+        let entity = self
+            .substrate
+            .entities
+            .get(id)
+            // Not one vt+0x4A0's campaign shroud prelude promotes now.
+            .filter(|entity| !self.shroud_prelude_discovers(entity))?;
         let object = self.interner.object_type(entity.type_ref(), rules)?;
         let now = self.session.binary_frame();
         let infantry = entity.infantry.as_ref()?;

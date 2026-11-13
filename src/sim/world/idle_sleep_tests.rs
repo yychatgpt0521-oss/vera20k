@@ -82,6 +82,56 @@ fn a_sleeping_building_matches_its_awake_twin_hash_by_hash() {
     );
 }
 
+/// In a campaign `TechnoClass` vt+0x4A0's shroud prelude tests an
+/// undiscovered object on every visit and discovers it once the player's
+/// shroud no longer covers it. Another house's building sleeps under the
+/// player's shroud, wakes on the visit the player's map is revealed, is
+/// discovered then as its awake twin is, and sleeps again.
+#[test]
+fn a_campaign_building_sleeps_under_the_shroud_until_revealed() {
+    let rules = rules();
+    let campaign = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Campaign);
+        let player = sim.interner.intern("Russians");
+        sim.session.set_current_house_for_test(Some(player));
+        sim.fog = crate::sim::vision::FogState::new(32, 32);
+        (sim, grid, player)
+    };
+    let discovered = |sim: &Simulation| {
+        sim.substrate
+            .entities
+            .get(1)
+            .unwrap()
+            .discovery
+            .discovered_by_current_house()
+    };
+    let (mut asleep, grid, player) = campaign(true);
+    let (mut awake, awake_grid, _) = campaign(false);
+    let mut slept_hidden = 0;
+    for frame in 0..200 {
+        if frame == 90 {
+            slept_hidden = asleep.idle_sleep_counts().1;
+            asleep.fog.reveal_all_for_owner(player);
+            awake.fog.reveal_all_for_owner(player);
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+        assert_eq!(discovered(&asleep), discovered(&awake), "frame {frame}");
+    }
+    assert!(
+        slept_hidden > 50,
+        "under the shroud it slept {slept_hidden} visits"
+    );
+    assert!(discovered(&asleep));
+    assert!(
+        asleep.idle_sleep_counts().1 > slept_hidden + 50,
+        "discovered, it sleeps again"
+    );
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();
