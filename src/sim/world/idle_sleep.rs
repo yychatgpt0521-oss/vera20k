@@ -14,7 +14,7 @@
 //!   every mutable hand-out, settling the owed counters first);
 //! - nothing it reads outside itself has changed: the client's pending voice
 //!   set and its cell's hidden state (the Mark owners wake every object); a
-//!   building's owner's power (the note compared at each visit); a ground
+//!   building's owner's power and IQ (the note compared at each visit); a ground
 //!   building in an infantryman's cell, and radiation there on the frames it
 //!   applies (both read at each visit); and nothing it writes outside itself
 //!   has been undone: its team's leaving-map byte, which an infantryman sets
@@ -27,7 +27,8 @@
 //! slot. The state hash and the save form read a sleeper as settled.
 //!
 //! It marks plain buildings (no factory, super weapon, occupants, turret or
-//! ambient sound of their own, at full health, on Guard; armed ones sleep
+//! ambient sound of their own, on Guard, at full health or damaged with
+//! nothing to heal or repair it; armed ones sleep
 //! until their Guard or scan timer, and a working sound is re-driven at the
 //! sleeper's slot) and standing infantry (on
 //! Guard or Area Guard, at full health, standing ready with no target,
@@ -203,7 +204,7 @@ impl Simulation {
                     .substrate
                     .entities
                     .owner_of(id)
-                    .is_some_and(|owner| self.power_note(owner) == note),
+                    .is_some_and(|owner| self.owner_note(owner, rules) == note),
                 Some(EntityCategory::Infantry) => !self.infantry_disturbed(id, rules),
                 _ => false,
             };
@@ -402,16 +403,47 @@ impl Simulation {
         (!timer.due(now)).then(|| frames.min(timer.remaining(now)))
     }
 
-    /// What a sleeping building reads of its owner every visit
+    /// What a sleeping building reads of its owner every visit: its power
     /// (`BuildingClass::IsPowerOnline @ 0x004555D0`, through
-    /// [`Simulation::building_operational_state`]): full power, a blackout
-    /// still running at this frame, a drained power source.
-    fn power_note(&self, owner: InternedId) -> u8 {
+    /// [`Simulation::building_operational_state`]: full power, a blackout
+    /// still running at this frame, a drained power source) and whether
+    /// its IQ admits the computer's repair-or-sell branch of
+    /// `UpdateRepairAndPower` (`[IQ] RepairSell=`, `0x00450630`).
+    fn owner_note(&self, owner: InternedId, rules: &RuleSet) -> u8 {
+        let iq_repairs = self
+            .houses
+            .get(&owner)
+            .is_some_and(|house| house.current_iq() >= rules.general.iq_repair_sell);
         self.power_states.get(&owner).map_or(0x80, |state| {
             u8::from(state.has_full_power())
                 | u8::from(state.blackout_remaining(self.session.binary_frame()) > 0) << 1
                 | u8::from(state.has_drained_power_source()) << 2
-        })
+        }) | u8::from(iq_repairs) << 3
+    }
+
+    /// Whether damaged building `id`'s visit leaves its health and money as
+    /// they are: it does not heal itself (`TechnoClass` vt+0x294
+    /// `0x0070BE80`, Ares GetSelfHealAmount `10044E80`; the house heal arms
+    /// skip a building), and the computer's repair-or-sell branch of
+    /// `UpdateRepairAndPower` (`0x00450630`) does not admit it, its owner's
+    /// IQ being below `[IQ] RepairSell=` (kept in [`Self::owner_note`]) or it
+    /// being no building its house may repair.
+    fn damage_rests(
+        &self,
+        id: u64,
+        entity: &crate::sim::game_entity::GameEntity,
+        object: &ObjectType,
+        rules: &RuleSet,
+    ) -> bool {
+        !crate::sim::combat::veterancy::holds_self_heal(entity, object)
+            // TechnoAI's damage sparks draw from the Scenario stream every
+            // visit until a spark system is linked (`0x006FACD9`).
+            && !self.damage_spark_draws(entity, object, rules)
+            && (self
+                .houses
+                .get(&entity.owner())
+                .is_none_or(|house| house.current_iq() < rules.general.iq_repair_sell)
+                || !crate::sim::production::can_repair_building(self, rules, id))
     }
 
     /// Whether an extension's per-visit steps, which this module has not
@@ -483,7 +515,7 @@ impl Simulation {
         let idle = entity.lifecycle.object_alive()
             && !entity.lifecycle.in_limbo()
             && !entity.death.is_dying()
-            && health == object.strength
+            && (health == object.strength || self.damage_rests(id, entity, object, rules))
             && entity.estimated_health
                 == crate::sim::estimated_health::EstimatedHealth::from_raw(health)
             && entity.mission.current().known() == Some(MissionType::Guard)
@@ -497,8 +529,8 @@ impl Simulation {
             // the power health sample (`0x00440042`), the damage fire
             // cache (`0x0043FC92`) and the relight sample (`0x00450A47`).
             && entity.building_power_health_sample() == Some(health)
-            && !entity.damage_fires.is_active()
-            && entity.damage_fires.anim_ids().iter().all(Option::is_none)
+            && entity.damage_fires.is_active()
+                == crate::sim::anim_class::building_damage_fires_due(object, health, rules)
             && entity.airstrike_tint == Default::default()
             // Its building's airstrike flag reads `airstrike_link`, empty
             // below.
@@ -551,7 +583,8 @@ impl Simulation {
             .min(SLEEP_CAP_FRAMES);
         let wake_at = now.checked_add(frames)?;
         // The turn at `now` has run; sleeping starts with the next frame.
-        (wake_at > now.saturating_add(1)).then_some((wake_at, self.power_note(entity.owner())))
+        (wake_at > now.saturating_add(1))
+            .then_some((wake_at, self.owner_note(entity.owner(), rules)))
     }
 
     /// Something outside sleeping infantryman `id` that its next turn would

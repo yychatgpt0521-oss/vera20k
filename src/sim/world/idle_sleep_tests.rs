@@ -287,6 +287,101 @@ fn an_armed_defense_sleeps_between_its_guard_and_scan_timers() {
     );
 }
 
+/// A damaged building with nothing to heal or repair it sleeps, burning as
+/// it does at half Strength (its damage fire cache holds). When its
+/// owner's IQ comes to admit the computer's repair branch of
+/// `UpdateRepairAndPower` (`0x00450630`) it wakes on the owner note and
+/// starts its repair on the awake twin's frame.
+#[test]
+fn a_damaged_building_sleeps_until_its_owner_would_repair_it() {
+    let rules = rules();
+    let damaged = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        let plant = sim.substrate.entities.get_mut(1).unwrap();
+        plant.health.set_for_test(375);
+        // A map's `AIRepairable` building, which the computer may repair.
+        plant.ai_sell_repair.set_ai_repairable_for_test(true);
+        let owner = sim.interner.get("Americans").unwrap();
+        // A computer house with money, below `[IQ] RepairSell=` for now.
+        sim.houses
+            .register(crate::sim::house_state::HouseState::new(
+                owner, 0, None, false, 5000, 10,
+            ));
+        sim.houses
+            .get_mut(&owner)
+            .unwrap()
+            .set_current_iq_for_test(0);
+        (sim, grid, owner)
+    };
+    let (mut asleep, grid, owner) = damaged(true);
+    let (mut awake, awake_grid, _) = damaged(false);
+    let mut slept = 0;
+    for frame in 0..200 {
+        if frame == 90 {
+            slept = asleep.idle_sleep_counts().1;
+            for sim in [&mut asleep, &mut awake] {
+                let iq = rules.general.iq_repair_sell;
+                sim.houses
+                    .get_mut(&owner)
+                    .unwrap()
+                    .set_current_iq_for_test(iq);
+            }
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+    }
+    assert!(slept > 50, "the damaged plant slept {slept} visits");
+    let repairing = |sim: &Simulation| {
+        sim.substrate
+            .entities
+            .get(1)
+            .unwrap()
+            .building
+            .repairing
+            .is_on()
+    };
+    assert!(
+        repairing(&awake) && repairing(&asleep),
+        "both repair once admitted"
+    );
+}
+
+/// A damaged building that sparks (Ares `DamageSparks=`, a `Spark` system in
+/// `DamageParticleSystems=`) draws from the Scenario stream every visit until
+/// a spark system is linked (TechnoAI `0x006FACD9`, Ares `1004B760`): it
+/// stays awake through those draws and matches its awake twin.
+#[test]
+fn a_sparking_damaged_building_draws_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nDamageSparks=yes\nDamageParticleSystems=SparkSys\n\n\
+         [Particles]\n1=Spark1\n\n[ParticleSystems]\n1=SparkSys\n\n\
+         [SparkSys]\nHoldsWhat=Spark1\nBehavesLike=Spark\n\n[Spark1]\nBehavesLike=Spark\n",
+    ))
+    .expect("spark rules parse");
+    let damaged = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .health
+            .set_for_test(300);
+        (sim, grid)
+    };
+    let (mut asleep, grid) = damaged(true);
+    let (mut awake, awake_grid) = damaged(false);
+    for frame in 0..200 {
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+    }
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();
