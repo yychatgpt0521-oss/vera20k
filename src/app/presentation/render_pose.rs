@@ -3,7 +3,7 @@
 
 use crate::sim::game_entity::GameEntity;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct RenderPose {
     pub screen: [f32; 2],
     pub body: u16,
@@ -24,17 +24,42 @@ pub(crate) struct RenderPose {
 /// and rotation, like its separate ShadowMatrix. PrimaryFacing may already
 /// point elsewhere while the plane turns. Other locomotors keep their owner.
 pub(crate) fn body_draw_facing(entity: &GameEntity, binary_frame: u32) -> u16 {
-    if entity
-        .locomotor
-        .as_ref()
+    draw_facing(
+        entity.locomotor.as_ref(),
+        entity.barrel_facing.as_ref(),
+        &entity.body_facing,
+        binary_frame,
+    )
+}
+
+/// [`body_draw_facing`] of an object's presentation record.
+pub(crate) fn record_body_draw_facing(
+    entity: &crate::app::presentation::frame::ObjectRecord,
+    binary_frame: u32,
+) -> u16 {
+    draw_facing(
+        entity.locomotor.as_ref(),
+        entity.barrel_facing.as_ref(),
+        &entity.body_facing,
+        binary_frame,
+    )
+}
+
+fn draw_facing(
+    locomotor: Option<&crate::sim::movement::locomotor::LocomotorState>,
+    barrel: Option<&crate::sim::movement::FacingClass>,
+    body: &crate::sim::movement::FacingClass,
+    binary_frame: u32,
+) -> u16 {
+    if locomotor
         .is_some_and(|loco| loco.active_kind() == crate::rules::locomotor_type::LocomotorKind::Fly)
     {
-        entity.barrel_facing.as_ref().map_or_else(
-            || entity.body_facing_current(binary_frame),
+        barrel.map_or_else(
+            || body.current(binary_frame),
             |facing| facing.current(binary_frame),
         )
     } else {
-        entity.body_facing_current(binary_frame)
+        body.current(binary_frame)
     }
 }
 
@@ -42,8 +67,11 @@ pub(crate) fn body_draw_facing(entity: &GameEntity, binary_frame: u32) -> u16 {
 /// facing matrix (`0x0055A730`'s RotateZ) about Y (`0x005AF080`). Rocket
 /// (`0x00663470`) negates its CurrentPitch; Tunnel (`0x00729B40`) rotates by
 /// its dig pitch as it is, so it is negated into the same convention.
-pub(crate) fn body_pitch(entity: &GameEntity, binary_frame: u32) -> f32 {
-    let Some(locomotor) = entity.locomotor.as_ref() else {
+pub(crate) fn body_pitch(
+    locomotor: Option<&crate::sim::movement::locomotor::LocomotorState>,
+    binary_frame: u32,
+) -> f32 {
+    let Some(locomotor) = locomotor else {
         return 0.;
     };
     if let Some(rocket) = locomotor.rocket_runtime() {
@@ -79,7 +107,7 @@ impl RenderPose {
                 .rocking
                 .as_ref()
                 .map_or([0.; 2], |r| r.angles_native()),
-            rocket_pitch: body_pitch(entity, frame),
+            rocket_pitch: body_pitch(entity.locomotor.as_ref(), frame),
             visual_lift: f32::from(entity.ion_blast_lift_pixels()),
             recoil: entity.voxel_recoil(),
             slope: crate::sim::movement::slope_transition::state_for_entity(entity)
