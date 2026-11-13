@@ -5,6 +5,8 @@ fn rank_only(parent: u64, index: u32, insignia: Option<&str>) -> ObjectExtrasRun
         parent,
         bomb_clock: None,
         wrench: None,
+        #[cfg(feature = "ares")]
+        power_off: None,
         rank: Some(index),
         rank_insignia: insignia.map(str::to_owned),
         background: None,
