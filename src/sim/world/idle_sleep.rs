@@ -36,7 +36,8 @@
 //!
 //! [`Simulation::check_idle_sleep`] runs every turn the pass would skip and
 //! panics if it changed anything but the owed counters: the object, the
-//! state hash, or the Scenario or Main stream.
+//! state hash, or the Scenario or Main stream. A match checks when
+//! `VERA20K_IDLE_SLEEP` is `check`.
 
 use super::{FrameEffects, Simulation};
 use crate::map::entities::EntityCategory;
@@ -84,6 +85,12 @@ impl IdleSleep {
     pub(super) fn is_on(&self) -> bool {
         self.on
     }
+
+    /// Whether skipped turns run and are compared, and quiet units are
+    /// asked again whether they rest ([`Simulation::check_idle_sleep`]).
+    pub(super) fn is_checking(&self) -> bool {
+        self.check
+    }
 }
 
 impl Simulation {
@@ -97,17 +104,25 @@ impl Simulation {
         }
     }
 
-    /// [`Self::sleep_idle_objects`] as a match starts, unless the
-    /// environment variable `VERA20K_IDLE_SLEEP` is `0`: the switch for
-    /// ruling sleeping out of a fault report.
+    /// [`Self::sleep_idle_objects`] as a match starts, as the environment
+    /// variable `VERA20K_IDLE_SLEEP` says: `0` rules sleeping out of a fault
+    /// report, `check` sleeps and checks ([`Self::check_idle_sleep`]) so a
+    /// played match proves sleeping changed nothing.
     pub fn sleep_idle_objects_in_match(&mut self) {
-        let off = std::env::var_os("VERA20K_IDLE_SLEEP").is_some_and(|value| value == "0");
-        self.sleep_idle_objects(!off);
+        self.sleep_idle_objects_as(std::env::var_os("VERA20K_IDLE_SLEEP").as_deref());
+    }
+
+    /// [`Self::sleep_idle_objects_in_match`] for the variable's value.
+    pub(super) fn sleep_idle_objects_as(&mut self, setting: Option<&std::ffi::OsStr>) {
+        self.sleep_idle_objects(setting.is_none_or(|value| value != "0"));
+        self.check_idle_sleep(setting.is_some_and(|value| value == "check"));
     }
 
     /// Run every turn sleeping would skip and panic if it changed anything
     /// but the owed counters: the object, the state hash's parts, the
-    /// Scenario or Main stream, or the Logic list.
+    /// Scenario or Main stream, or the Logic list; also ask every quiet unit
+    /// at the start of its turn whether it still rests
+    /// (`world::quiet_units`), as debug builds do.
     pub fn check_idle_sleep(&mut self, on: bool) {
         self.idle_sleep.check = on;
     }
