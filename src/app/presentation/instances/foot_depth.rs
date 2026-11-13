@@ -351,7 +351,11 @@ fn unit_z_adjust_in(
         .as_ref()
         .and_then(|locomotor| locomotor.tunnel_runtime())
         .map_or(0, |tunnel| {
-            let location = crate::sim::movement::ground_pose::object_location(entity, None);
+            let location = crate::sim::components::DriveCoord {
+                x: xy[0],
+                y: xy[1],
+                z: world_z,
+            };
             let floor = crate::sim::movement::ground_pose::query_ground_height(
                 &crate::map::resolved_terrain::NativeCellQuery::canonical(terrain),
                 location,

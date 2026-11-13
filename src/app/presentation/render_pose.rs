@@ -67,8 +67,11 @@ fn draw_facing(
 /// facing matrix (`0x0055A730`'s RotateZ) about Y (`0x005AF080`). Rocket
 /// (`0x00663470`) negates its CurrentPitch; Tunnel (`0x00729B40`) rotates by
 /// its dig pitch as it is, so it is negated into the same convention.
-pub(crate) fn body_pitch(entity: &GameEntity, binary_frame: u32) -> f32 {
-    let Some(locomotor) = entity.locomotor.as_ref() else {
+pub(crate) fn body_pitch(
+    locomotor: Option<&crate::sim::movement::locomotor::LocomotorState>,
+    binary_frame: u32,
+) -> f32 {
+    let Some(locomotor) = locomotor else {
         return 0.;
     };
     if let Some(rocket) = locomotor.rocket_runtime() {
@@ -104,7 +107,7 @@ impl RenderPose {
                 .rocking
                 .as_ref()
                 .map_or([0.; 2], |r| r.angles_native()),
-            rocket_pitch: body_pitch(entity, frame),
+            rocket_pitch: body_pitch(entity.locomotor.as_ref(), frame),
             visual_lift: f32::from(entity.ion_blast_lift_pixels()),
             recoil: entity.voxel_recoil(),
             slope: crate::sim::movement::slope_transition::state_for_entity(entity)

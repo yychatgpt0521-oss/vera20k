@@ -1353,7 +1353,8 @@ fn body_pose(
         .rocking
         .as_ref()
         .map_or([0.; 2], |r| r.angles_native());
-    let pitch = crate::app::presentation::render_pose::body_pitch(entity, binary_frame);
+    let pitch =
+        crate::app::presentation::render_pose::body_pitch(entity.locomotor.as_ref(), binary_frame);
     body_pose_with_angles(entity, band, tilt_crash_jumpjet, angles, pitch, None, None)
 }
 

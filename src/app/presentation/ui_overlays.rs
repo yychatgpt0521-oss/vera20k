@@ -1577,7 +1577,7 @@ fn phobos_insignia_draw<'a>(
 #[cfg(all(feature = "ares", not(feature = "phobos")))]
 fn ares_insignia_draw<'a>(
     sim: &crate::sim::world::Simulation,
-    entity: &crate::sim::game_entity::GameEntity,
+    entity: &ObjectRecord,
     object: &crate::rules::object_type::ObjectType,
     rules: &RuleSet,
     overlay: &'a crate::render::selection_overlay::SelectionOverlay,
