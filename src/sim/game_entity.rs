@@ -1465,7 +1465,7 @@ impl GameEntity {
     }
 
     /// Whether [`Self::reload_techno_ammo`] reloads a round at `now`.
-    fn techno_ammo_reloads(
+    pub(crate) fn techno_ammo_reloads(
         &self,
         object: &crate::rules::object_type::ObjectType,
         now: i32,

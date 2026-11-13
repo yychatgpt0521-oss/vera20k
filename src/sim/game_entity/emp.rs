@@ -989,12 +989,15 @@ mod receiver {
             rules: &RuleSet,
             effects: FrameEffects<'_>,
         ) {
-            let Some(entity) = self.substrate.entities.get_mut(target) else {
+            // An object without EMP is not handed out for writing (VERA-only;
+            // the same results).
+            let Some(entity) = self
+                .substrate
+                .entities
+                .get_mut_if(target, |entity| entity.emp.remaining != 0)
+            else {
                 return;
             };
-            if entity.emp.remaining == 0 {
-                return;
-            }
             entity.emp.remaining = entity.emp.remaining.wrapping_sub(1);
             let remaining = entity.emp.remaining;
             let delayed = !entity.deactivated.is_offline() && advisable(entity);

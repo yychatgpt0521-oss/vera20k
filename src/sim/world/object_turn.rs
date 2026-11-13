@@ -1343,13 +1343,23 @@ impl Simulation {
             // gamemd51BCB2: out of limbo, Reload(+424) before idle Scatter.
             // The shared Techno owner supplies count/clock semantics; the
             // Unit-only MobileFire pause is deliberately not used here.
+            // Reload writes only when a round is due: no other man is handed
+            // out for writing (VERA-only; the same results).
             if rules.ares()
-                && let Some(entity) = sim.substrate.entities.get_mut(stable_id)
-                && entity.is_object_alive()
-                && !entity.lifecycle.in_limbo()
-                && let Some(obj) = sim.interner.object_type(entity.type_ref(), rules)
+                && let Some(obj) = sim
+                    .substrate
+                    .entities
+                    .get(stable_id)
+                    .and_then(|entity| sim.interner.object_type(entity.type_ref(), rules))
             {
-                entity.reload_techno_ammo(obj, sim.session.binary_frame() as i32, rules.ares());
+                let now = sim.session.binary_frame() as i32;
+                if let Some(entity) = sim.substrate.entities.get_mut_if(stable_id, |entity| {
+                    entity.is_object_alive()
+                        && !entity.lifecycle.in_limbo()
+                        && entity.techno_ammo_reloads(obj, now)
+                }) {
+                    entity.reload_techno_ammo(obj, now, true);
+                }
             }
             //51BCA4..51BDCF follows the entire FootAI, including Process and
             // its tails. A successful Scatter invokes Process a second time

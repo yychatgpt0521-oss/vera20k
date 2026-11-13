@@ -858,12 +858,13 @@ pub(super) fn update_prism(
     ctx: ObjectAiCtx<'_>,
     bridge_state_changed: &mut bool,
 ) {
-    let Some(entity) = sim.substrate.entities.get_mut(id) else {
+    // A building with no delayed fire is not handed out for writing
+    // (VERA-only; the same results).
+    let Some(entity) = sim.substrate.entities.get_mut_if(id, |entity| {
+        entity.building.pending_building_fire.pending().is_some()
+    }) else {
         return;
     };
-    if entity.building.pending_building_fire.pending().is_none() {
-        return;
-    }
     if entity.ares.ares_prism.charge_delay >= 1 {
         entity.ares.ares_prism.charge_delay -= 1;
         if entity.ares.ares_prism.charge_delay < 1 {

@@ -132,6 +132,36 @@ fn a_campaign_building_sleeps_under_the_shroud_until_revealed() {
     );
 }
 
+/// A resting building's whole turn hands nothing out for writing, so no
+/// reader of the store's touch logs re-derives it. Ares builds add per-visit
+/// steps (EMP, bounty, passenger turret, delayed prism fire, reload) that
+/// find nothing to do for it, so they hand it out neither.
+#[test]
+fn a_resting_buildings_turn_writes_nothing() {
+    // Where Ares plays, its per-visit steps run on every Techno turn.
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    use crate::sim::entity_store::TouchReader;
+    use crate::sim::touch_log::Touched;
+    let rules = rules();
+    let (mut sim, grid) = power_plant(&rules, false);
+    for _ in 0..40 {
+        tick(&mut sim, &rules, &grid);
+    }
+    let _ = sim
+        .substrate
+        .entities
+        .take_touched(TouchReader::ExpiryListeners);
+    tick(&mut sim, &rules, &grid);
+    let touched = sim
+        .substrate
+        .entities
+        .take_touched(TouchReader::ExpiryListeners);
+    assert!(
+        matches!(&touched, Touched::Ids(ids) if !ids.contains(&1)),
+        "the plant's turn handed it out: {touched:?}"
+    );
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();

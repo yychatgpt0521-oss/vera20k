@@ -450,6 +450,15 @@ fn ares_produce_cash_step(sim: &mut Simulation, stable_id: u64, rules: &RuleSet)
     }
     let owner = entity.owner();
     let types = ares_cash_types(&sim.interner, entity, rules);
+    // A building none of whose types produces cash has no timer to step:
+    // it is not handed out for writing (VERA-only; the same results).
+    if types
+        .iter()
+        .flatten()
+        .all(|kind| kind.produce_cash_delay <= 0)
+    {
+        return;
+    }
     let frame = sim.session.binary_frame() as i32;
     let mut amount = 0_i32;
     let Some(entity) = sim.substrate.entities.get_mut(stable_id) else {

@@ -1759,8 +1759,11 @@ fn techno_common_steps(
             .get(id)
             .map(|entity| entity.type_ref());
         sim.update_ares_surface_conversion(id, rules, effects);
+        // Only a `PassengerTurret=` type writes, so only it is handed out
+        // for writing (VERA-only; the same results).
         if let Some(object) =
             hook_type.and_then(|type_ref| sim.interner.object_type(type_ref, rules))
+            && object.techno_combat().movement().passenger_turret()
             && let Some(entity) = sim.substrate.entities.get_mut(id)
         {
             entity.update_passenger_turret(object);

@@ -43,6 +43,12 @@ impl BountyDisplayState {
         self.pending = self.pending.wrapping_add(amount);
     }
 
+    /// Whether a sum waits for display; [`Self::take_ready`] takes none
+    /// otherwise.
+    pub(crate) fn is_pending(&self) -> bool {
+        self.pending != 0
+    }
+
     /// The queued sum, taken as the next display would.
     #[cfg(test)]
     pub(crate) fn take_pending_for_test(&mut self) -> i32 {
@@ -78,7 +84,13 @@ impl Simulation {
         force: bool,
     ) {
         let frame = self.session.binary_frame() as i32;
-        let Some(actor) = self.substrate.entities.get_mut(id) else {
+        // An object with no sum waiting is not handed out for writing
+        // (VERA-only; the same results).
+        let Some(actor) = self
+            .substrate
+            .entities
+            .get_mut_if(id, |actor| actor.ares.bounty_display.is_pending())
+        else {
             return;
         };
         let Some(amount) = actor.ares.bounty_display.take_ready(
