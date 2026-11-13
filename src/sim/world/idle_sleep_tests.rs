@@ -202,6 +202,90 @@ fn an_ares_building_with_a_round_to_reload_stays_awake() {
     assert_eq!(sim.idle_sleep_counts(), (0, 0));
 }
 
+/// An armed defense without a turret sleeps between its own timers: its
+/// Guard handler's AARate re-arm with its Scenario draw
+/// (`BuildingClass::Mission_Guard @ 0x004496B0`) and its passive scan
+/// (`TechnoClass::AI_Update @ 0x006FA65A`) run on the frames they would
+/// awake. A tank that appears in range at frame 120 is taken and fired at
+/// on the same frames as by the awake twin.
+#[test]
+fn an_armed_defense_sleeps_between_its_guard_and_scan_timers() {
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\nNormalTargetingDelay=27\nGuardAreaTargetingDelay=36\n\n\
+         [InfantryTypes]\n[AircraftTypes]\n[VehicleTypes]\n0=MTNK\n\
+         [BuildingTypes]\n0=GAPILL\n\n\
+         [GAPILL]\nStrength=400\nArmor=wood\nFoundation=1x1\nSight=6\n\
+         HasStupidGuardMode=no\nPrimary=105mm\n\n\
+         [MTNK]\nLocomotor={4A582741-9839-11d1-B709-00A024DDAFD1}\n\
+         Strength=300\nArmor=heavy\nSpeed=6\nSight=10\n\n\
+         [105mm]\nDamage=65\nROF=50\nRange=5\nWarhead=AP\n\n\
+         [AP]\nVerses=100%,100%,90%,75%,75%,75%,60%,30%,20%,0%,0%\n",
+    ))
+    .expect("armed defense rules parse");
+    let defense = |sleep| {
+        let mut sim = Simulation::with_seed(0x51EE_9000_0002);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Skirmish);
+        let grid = crate::sim::arena_fixture::flat_ground(&mut sim, &rules);
+        let entity = |owner: &str, type_id: &str, x, y, category| MapEntity {
+            owner: owner.to_string(),
+            type_id: type_id.to_string(),
+            health: 256,
+            cell_x: x,
+            cell_y: y,
+            facing: 64,
+            category,
+            sub_cell: 0,
+            veterancy: Some(0),
+            high: false,
+            mission: None,
+            trigger_tag: None,
+            recruitable_a: true,
+            recruitable_b: true,
+            group: -1,
+            follows: None,
+            structure_columns: Default::default(),
+            structure_ai_sellable: false,
+            structure_ai_repairable: false,
+            structure_online: true,
+        };
+        let pill = entity("Americans", "GAPILL", 10, 10, EntityCategory::Structure);
+        sim.spawn_from_map(&[pill], Some(&rules));
+        sim.sleep_idle_objects(sleep);
+        (sim, grid)
+    };
+    let (mut asleep, grid) = defense(true);
+    let (mut awake, awake_grid) = defense(false);
+    let mut slept = 0;
+    for frame in 0..300 {
+        if frame == 120 {
+            slept = asleep.idle_sleep_counts().1;
+            for sim in [&mut asleep, &mut awake] {
+                sim.spawn_object("MTNK", "Russians", 13, 10, 0, &rules)
+                    .unwrap();
+            }
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(
+            asleep.state_hash(),
+            awake.state_hash(),
+            "the twins differ after frame {frame}"
+        );
+    }
+    assert!(slept > 60, "the idle defense slept {slept} visits");
+    let tank = awake
+        .substrate
+        .entities
+        .values()
+        .find(|entity| entity.category() == EntityCategory::Unit)
+        .expect("the tank");
+    assert!(
+        tank.health.current() < 300,
+        "the defense took and hit the tank"
+    );
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();

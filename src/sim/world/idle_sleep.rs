@@ -375,6 +375,24 @@ impl Simulation {
                     .is_none_or(|ammo| ammo.current() >= object.ammo))
     }
 
+    /// `frames`, or fewer when the passive block of `TechnoClass::AI_Update`
+    /// (`0x006FA65A`) would act for `id` and scans when its targeting timer
+    /// runs out; `None` when that timer is out now.
+    fn passive_scan_bound(
+        &self,
+        id: u64,
+        entity: &crate::sim::game_entity::GameEntity,
+        rules: &RuleSet,
+        frames: u32,
+    ) -> Option<u32> {
+        if !super::techno_ai::passive_block_acts(self, id, rules) {
+            return Some(frames);
+        }
+        let now = self.session.binary_frame();
+        let timer = entity.passive_scan.timer();
+        (!timer.due(now)).then(|| frames.min(timer.remaining(now)))
+    }
+
     /// What a sleeping building reads of its owner every visit
     /// (`BuildingClass::IsPowerOnline @ 0x004555D0`, through
     /// [`Simulation::building_operational_state`]): full power, a blackout
@@ -410,12 +428,14 @@ impl Simulation {
         let object = self.interner.object_type(entity.type_ref(), rules)?;
         // The type: every step its visit runs returns on the building's own
         // state or on the owner's power.
-        let plain = object.has_stupid_guard_mode
-            && !object.has_factory()
+        let plain = !object.has_factory()
             && object.super_weapon.is_none()
             && object.super_weapon2.is_none()
             && !object.is_gattling
             && !object.has_turret
+            // A charge turret's index follows its rearm countdown every
+            // visit (TechnoAI `0x006FA4FB`).
+            && !crate::sim::game_entity::GameEntity::charges_turret(object)
             && !object.can_be_occupied
             && object.ambient_sound.is_none()
             && object.working_sound.is_none()
@@ -430,7 +450,25 @@ impl Simulation {
             && !object.cloakable
             && object.powers_unit.is_none()
             && object.produce_cash_amount == 0
-            && self.ares_steps_rest(entity, object, rules);
+            && self.ares_steps_rest(entity, object, rules)
+            // `BuildingClass::HasTurret @ 0x004527D0` counts an installed
+            // upgrade's turret, which UpdateAnimation aims every visit.
+            && !entity
+                .building_upgrades()
+                .has_turret(object, rules, &self.interner)
+            // `BuildingClass::Is_Armed @ 0x00458DB0`: an armed building's
+            // Mission_Guard (`0x004496B0`) re-arms by AARate whatever
+            // HasStupidGuardMode says, and its passive block scans by its
+            // own timer; an unarmed one sleeps only on the stupid Guard
+            // return. Asked last: it walks the weapons.
+            && (object.has_stupid_guard_mode
+                || crate::sim::combat::combat_weapon::is_armed(
+                    entity,
+                    object,
+                    &self.substrate.entities,
+                    rules,
+                    &self.interner,
+                ));
         if !plain {
             return None;
         }
@@ -490,13 +528,6 @@ impl Simulation {
             && entity.parasite.eater().is_none()
             && entity.pending_entry().is_none()
             && !self.object_custom_sounds.contains_key(&id)
-            && !crate::sim::combat::combat_weapon::is_armed(
-                entity,
-                object,
-                &self.substrate.entities,
-                rules,
-                &self.interner,
-            )
             && self.building_operational_state(id, rules)
                 == Some(entity.building.building_last_operational.is_operational());
         if !idle {
@@ -506,7 +537,9 @@ impl Simulation {
         // (`BuildingClass::Mission_Guard @ 0x004496B0`) runs when it is out.
         let now = self.session.binary_frame();
         let remaining = entity.mission.dispatch_timer().remaining_if_pending(now)?;
-        let frames = u32::try_from(remaining).ok()?.min(SLEEP_CAP_FRAMES);
+        let frames = self
+            .passive_scan_bound(id, entity, rules, u32::try_from(remaining).ok()?)?
+            .min(SLEEP_CAP_FRAMES);
         let wake_at = now.checked_add(frames)?;
         // The turn at `now` has run; sleeping starts with the next frame.
         (wake_at > now.saturating_add(1)).then_some((wake_at, self.power_note(entity.owner())))
@@ -592,17 +625,12 @@ impl Simulation {
         // `MissionClass::AI @ 0x005B3060`'s dispatch timer: the Guard and
         // Area Guard handlers run when it is out, the idle fidget
         // (`InfantryClass::UpdateIdleAction @ 0x0051CDB0`) inside them.
-        let mut frames =
-            u32::try_from(entity.mission.dispatch_timer().remaining_if_pending(now)?).ok()?;
-        // The passive block of `TechnoClass::AI_Update` (`0x006FA65A`) scans
-        // when its targeting timer runs out, if it would act at all.
-        if super::techno_ai::passive_block_acts(self, id, rules) {
-            let timer = entity.passive_scan.timer();
-            if timer.due(now) {
-                return None;
-            }
-            frames = frames.min(timer.remaining(now));
-        }
+        let frames = self.passive_scan_bound(
+            id,
+            entity,
+            rules,
+            u32::try_from(entity.mission.dispatch_timer().remaining_if_pending(now)?).ok()?,
+        )?;
         // FootClass::AI's idle Scatter (`0x004DADF5`) on frames with the low
         // six bits set, and radiation on its application frames, read the
         // terrain and the cell: the first runs, the second is read at each
