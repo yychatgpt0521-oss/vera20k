@@ -64,8 +64,23 @@ fn team_label_spec(team: i32) -> (&'static str, &'static str) {
 }
 
 pub(super) fn team_label(state: &AppState, team: i32) -> String {
-    let (key, fallback) = team_label_spec(team);
-    localized_label(state, key, fallback)
+    room_team_label(team).unwrap_or_else(|| {
+        let (key, fallback) = team_label_spec(team);
+        localized_label(state, key, fallback)
+    })
+}
+
+/// A VERA room's teams past gamemd's A to D, as the lobby names them: the
+/// alphabet's next letters.
+fn room_team_label(team: i32) -> Option<String> {
+    let team = u32::try_from(team)
+        .ok()
+        .filter(|team| *team >= u32::from(crate::skirmish_launch::NATIVE_TEAMS))?;
+    Some(
+        char::from_u32(u32::from(b'A') + team)
+            .filter(char::is_ascii_uppercase)
+            .map_or_else(|| (team + 1).to_string(), String::from),
+    )
 }
 
 pub(crate) fn combo_item_label(state: &AppState, item: SkirmishComboItem) -> String {
@@ -907,7 +922,41 @@ pub(super) fn push_random_map_setup_modal_text_draws(
     // label reads "Environment" even though the control writes the map type.
     // VERA: the Advanced view labels its sliders and shows each value in the
     // slider's plaque, as the Players slider does.
-    if modal.advanced {
+    // VERA: the Extras view labels its rows and shows each row's value or
+    // tool in the row's face.
+    for (row, entry) in modal.extras_rows().into_iter().enumerate() {
+        use crate::ui::skirmish_shell::ExtrasValue;
+        if modal.extras_row(row).is_none() {
+            continue;
+        }
+        let (key, fallback) = entry.label();
+        push_text_draw(
+            out,
+            state,
+            &localized_label(state, key, fallback),
+            rect_to_text_rect(layout.advanced_label_rects[row]),
+            SHELL_LABEL_TEXT_RGB,
+            ShellAlign::V_CENTER,
+            SHELL_DROPDOWN_TEXT_DEPTH - 0.00008,
+            scale.factor(),
+        );
+        let value = match modal.extras_value(entry) {
+            ExtrasValue::Label(key, fallback) => localized_label(state, key, fallback),
+            ExtrasValue::Number(number) => number.to_string(),
+            ExtrasValue::Page(page, pages) => format!("{page} / {pages}"),
+        };
+        push_text_draw(
+            out,
+            state,
+            &value,
+            rect_to_text_rect(layout.advanced_control_rects[row]),
+            SHELL_LABEL_TEXT_RGB,
+            ShellAlign::H_CENTER | ShellAlign::V_CENTER,
+            SHELL_DROPDOWN_TEXT_DEPTH - 0.00009,
+            scale.factor(),
+        );
+    }
+    if modal.advanced && modal.extras_page.is_none() {
         for field in crate::ui::skirmish_shell::AdvancedField::ALL {
             let (key, fallback) = field.label();
             let color = if modal.is_enabled(RandomMapSetupControl::Advanced(field)) {
@@ -1035,10 +1084,18 @@ pub(super) fn push_random_map_setup_modal_text_draws(
             layout.cancel,
             RandomMapSetupControl::Cancel0x5c0,
         ),
-        if modal.advanced {
+        // The toggle names the view its press shows next.
+        if modal.extras_page.is_some() {
             (
                 "VERA:RandomMapBasic",
                 "Basic",
+                layout.advanced,
+                RandomMapSetupControl::AdvancedToggle,
+            )
+        } else if modal.advanced {
+            (
+                "VERA:RandomMapExtras",
+                "Extras",
                 layout.advanced,
                 RandomMapSetupControl::AdvancedToggle,
             )
@@ -1080,6 +1137,18 @@ pub(super) fn push_random_map_setup_modal_text_draws(
                 RandomMapSetupControl::FairStartsToggle,
             )
         },
+        {
+            let (key, fallback) = modal.preset.map_or(
+                ("VERA:RandomMapPresets", "Presets"),
+                crate::ui::skirmish_shell::RandomMapPreset::label,
+            );
+            (
+                key,
+                fallback,
+                layout.preset,
+                RandomMapSetupControl::PresetCycle,
+            )
+        },
     ]
     .into_iter()
     .filter(|(_, _, _, control)| {
@@ -1088,13 +1157,21 @@ pub(super) fn push_random_map_setup_modal_text_draws(
             RandomMapSetupControl::AdvancedToggle
                 | RandomMapSetupControl::ExportMap
                 | RandomMapSetupControl::FairStartsToggle
+                | RandomMapSetupControl::PresetCycle
         );
         !sliding && (!vera || modal.extended)
     }) {
+        let mut caption = localized_label(state, key, fallback);
+        // One of the player's own presets is named by its number.
+        if control == RandomMapSetupControl::PresetCycle
+            && let Some(crate::ui::skirmish_shell::RandomMapPreset::Mine(slot)) = modal.preset
+        {
+            caption = caption.replace("{number}", &(u32::from(slot) + 1).to_string());
+        }
         push_text_draw(
             out,
             state,
-            &localized_label(state, key, fallback),
+            &caption,
             button_text_rect(rect, modal.pressed_control == Some(control), scale),
             button_label_color_for_disabled(!modal.is_enabled(control)),
             ShellAlign::BUTTON_CAPTION,
@@ -1162,6 +1239,48 @@ pub(super) fn push_random_map_setup_modal_text_draws(
             out,
             state,
             &localized_label(state, "GUI:WorkingPleaseWait", "Working, please wait..."),
+            rect_to_text_rect(layout.progress_text),
+            SHELL_LABEL_TEXT_RGB,
+            ShellAlign::V_CENTER,
+            SHELL_DROPDOWN_TEXT_DEPTH - 0.0001,
+            scale.factor(),
+        );
+    } else if let Some((key, fallback)) = modal.extras_note {
+        // VERA: what the last Extras tool did, where the progress text goes.
+        push_text_draw(
+            out,
+            state,
+            &localized_label(state, key, fallback),
+            rect_to_text_rect(layout.progress_text),
+            SHELL_LABEL_TEXT_RGB,
+            ShellAlign::V_CENTER,
+            SHELL_DROPDOWN_TEXT_DEPTH - 0.0001,
+            scale.factor(),
+        );
+    } else if let Some(report) = modal.fairness.filter(|_| modal.extended && modal.generated) {
+        // VERA: how evenly the map on show treats its starts.
+        let readout = report.readout();
+        let text = localized_label(
+            state,
+            "VERA:RandomMapFairness",
+            "Fairness: ore {ore}%, 2nd field {expansion}%, room {room}%, spacing {spacing}%",
+        )
+        .replace("{ore}", &readout.ore.to_string())
+        .replace("{expansion}", &readout.expansion.to_string())
+        .replace("{room}", &readout.room.to_string())
+        .replace("{spacing}", &readout.spacing.to_string());
+        // The water near the starts joins the line with Sea Access on.
+        let text = match readout.sea.filter(|_| report.sea_wanted) {
+            Some(sea) => {
+                text + &localized_label(state, "VERA:RandomMapFairnessSea", ", sea {sea}%")
+                    .replace("{sea}", &sea.to_string())
+            }
+            None => text,
+        };
+        push_text_draw(
+            out,
+            state,
+            &text,
             rect_to_text_rect(layout.progress_text),
             SHELL_LABEL_TEXT_RGB,
             ShellAlign::V_CENTER,
@@ -1980,6 +2099,14 @@ mod tests {
         assert_eq!(team_label_spec(1), ("LETTER_B", "B"));
         assert_eq!(team_label_spec(2), ("LETTER_C", "C"));
         assert_eq!(team_label_spec(3), ("LETTER_D", "D"));
+    }
+
+    #[test]
+    fn room_teams_past_d_take_the_lobby_letters() {
+        assert_eq!(room_team_label(-2), None);
+        assert_eq!(room_team_label(3), None);
+        assert_eq!(room_team_label(4).as_deref(), Some("E"));
+        assert_eq!(room_team_label(14).as_deref(), Some("O"));
     }
 
     #[test]

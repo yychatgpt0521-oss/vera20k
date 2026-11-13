@@ -288,6 +288,10 @@ pub fn status_help_key_for_random_map_setup(control: RandomMapSetupControl) -> &
         C::AdvancedToggle => "VERA:RandomMapAdvancedHelp",
         C::ExportMap => "VERA:RandomMapExportHelp",
         C::FairStartsToggle => "VERA:RandomMapFairStartsHelp",
+        C::PresetCycle => "VERA:RandomMapPresetHelp",
+        // The dialog knows which entry a row holds and shows that entry's
+        // help (`ExtrasRow::help`); this is the view's own.
+        C::ExtrasRow(_) => "VERA:RandomMapExtrasHelp",
         C::Advanced(super::super::layout::AdvancedField::PlateauSize) => {
             "VERA:RandomMapPlateauSizeHelp"
         }
