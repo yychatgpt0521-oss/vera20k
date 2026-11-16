@@ -5126,6 +5126,10 @@ pub struct RuleSet {
     pub radar_event_config: RadarEventConfig,
     /// All superweapon types indexed by ID (e.g., "LightningStormSpecial" → SuperWeaponType).
     pub super_weapons: HashMap<String, SuperWeaponType>,
+    /// Uppercase SW type ID → its [`Self::super_weapons`] key, the first in
+    /// [`Self::super_weapon_order`]: [`Self::super_weapon`]'s case-blind
+    /// answer, built on first use (the keys never change after loading).
+    super_weapon_keys: std::sync::OnceLock<LookupMap<String, String>>,
     /// `[SuperWeaponTypes]` in list order — the `SuperWeaponTypeClass` array
     /// index gamemd switches on where it does not use `Type=` (the
     /// `BuildingClass::OnConstructionComplete 0x00446948` `*Detected` jump
@@ -7442,6 +7446,7 @@ impl RuleSet {
             skirmish_color_mode,
             radar_event_config,
             super_weapons,
+            super_weapon_keys: std::sync::OnceLock::new(),
             super_weapon_order,
             combat_damage,
             bridge_warheads,
@@ -11196,7 +11201,23 @@ impl RuleSet {
 
     /// Look up a superweapon type by ID (case-insensitive, gamemd parity).
     pub fn super_weapon(&self, id: &str) -> Option<&SuperWeaponType> {
-        Self::lookup_ci(&self.super_weapons, id)
+        // The houses' Supers look their types up every frame; a case-blind
+        // miss used to scan them all (VERA-only; the same answers).
+        self.super_weapons.get(id).or_else(|| {
+            let keys = self.super_weapon_keys.get_or_init(|| {
+                let mut keys = LookupMap::default();
+                let listed = self.super_weapon_order.iter();
+                for key in listed.chain(self.super_weapons.keys()) {
+                    if self.super_weapons.contains_key(key) {
+                        keys.entry(key.to_ascii_uppercase())
+                            .or_insert_with(|| key.clone());
+                    }
+                }
+                keys
+            });
+            keys.get(&*upper_name_key(id))
+                .and_then(|key| self.super_weapons.get(key))
+        })
     }
 
     pub(crate) fn super_weapon_metadata(
@@ -12251,6 +12272,28 @@ Strength=750
         assert_eq!(find("none"), None);
         assert_eq!(find("<none>"), None);
         assert_eq!(find("HTNK"), None);
+    }
+
+    /// A Super type found by any case of its ID, as `lookup_ci` did; the
+    /// houses ask by the interned spelling every frame.
+    #[test]
+    fn super_weapon_matches_its_id_ignoring_case() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[SuperWeaponTypes]
+0=SpySatSpecial
+[SpySatSpecial]
+Type=PsychicReveal
+",
+        ))
+        .unwrap();
+        for name in ["SpySatSpecial", "SPYSATSPECIAL", "spysatspecial"] {
+            assert_eq!(
+                rules.super_weapon(name).map(|sw| sw.id.as_str()),
+                Some("SpySatSpecial"),
+                "{name}"
+            );
+        }
+        assert!(rules.super_weapon("NukeSpecial").is_none());
     }
 
     #[test]
