@@ -644,3 +644,28 @@ fn radiation_in_a_sleeping_gis_cell_wakes_it() {
         );
     });
 }
+
+/// A GI on Guard holding a Walk destination while it waits out a path
+/// blockage has no step head, so it is not moving now; Walk75AEC0 still
+/// steps for the destination, so it stays awake and repaths when the
+/// movement timer runs out.
+#[test]
+fn a_gi_waiting_out_a_blockage_stays_awake() {
+    let Some(fixture) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+        return;
+    };
+    gi_twins(&fixture.rules, 300, 200, |sim, gi| {
+        // As a match runs.
+        sim.batch_path_searches();
+        let now = sim.session.binary_frame();
+        let entity = sim.substrate.entities.get_mut(gi).expect("the GI lives");
+        entity
+            .locomotor
+            .as_mut()
+            .expect("the GI walks")
+            .set_walk_destination(Some(crate::sim::components::DriveCoord::cell(24, 16, 0)));
+        let path = entity.navigation.path_runtime_mut();
+        path.latch_blockage(now, 60);
+        path.start_movement(now, 30);
+    });
+}

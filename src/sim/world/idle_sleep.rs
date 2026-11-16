@@ -34,9 +34,9 @@
 //! Guard or Area Guard, at full health, standing ready with no target,
 //! order or fear). Everything else stays awake. A build with Phobos marks
 //! nothing ([`Simulation::extension_steps_unsorted`]): its per-visit steps
-//! are not sorted yet. Where Ares plays a building is marked only when the
-//! steps Ares adds to its visit rest ([`Simulation::ares_steps_rest`]), and
-//! no infantry yet.
+//! are not sorted yet. Where Ares plays a building or an infantryman is
+//! marked only when the steps Ares adds to its visit rest
+//! ([`Simulation::ares_steps_rest`]).
 //! In a campaign `TechnoClass` vt+0x4A0's shroud prelude runs every visit
 //! and tests the player's shroud until the object is discovered: an
 //! undiscovered sleeper is asked at each visit whether the shroud still
@@ -350,19 +350,22 @@ impl Simulation {
         }
     }
 
-    /// Whether the steps Ares adds to building `entity`'s visit
-    /// return on its own type and state (Ares.dll's TechnoClass_Update
-    /// `1004B320` and Building Update hooks): no surface conversion
+    /// Whether the steps Ares adds to a sleeper's visit return on its own
+    /// type and state (Ares.dll's TechnoClass_Update `1004B320`, the
+    /// Building and Infantry Update hooks): no surface conversion
     /// (`1004B348`), no PoweredBy source to scan (`1006A6F0`), no radar
     /// jammer (`RadarJamRadius`), no sensor array (`10016E30`), no firestorm
     /// wall (`10014B40`), no Ares ProduceCash timer (hook `0x43FD2C`), nothing
     /// attached or to attach (`1004B434`), no bounty sum to show
     /// (`10044490`), no silo whose stage reads the House's Ares storage
     /// ledger (`SiloDamage=`, which a deposit changes without writing the
-    /// silo) and no round to reload by the Ares Reload clock (`100478E0`).
+    /// silo), no round to reload by the Ares Reload clock (`100478E0`,
+    /// `10047980`) and, for a Foot, no `Operator=` to look for (`1004B439`).
     /// The EMP countdown and recovery, the driver and the deactivated-unit
-    /// steps find nothing in a building the rest of the rule admits. A game
-    /// where Ares does not play has none of these steps.
+    /// steps find nothing in a sleeper the rest of its rule admits, nor do an
+    /// infantryman's firestorm burn (a wall is a building in its cell) and
+    /// tiberium heal (at full Strength). A game where Ares does not play has
+    /// none of these steps.
     pub(super) fn ares_steps_rest(
         &self,
         entity: &crate::sim::game_entity::GameEntity,
@@ -382,7 +385,12 @@ impl Simulation {
                 && (object.storage == 0 || !object.silo_damage(rules))
                 && entity
                     .ammo()
-                    .is_none_or(|ammo| ammo.current() >= object.ammo))
+                    .is_none_or(|ammo| ammo.current() >= object.ammo)
+                && (!entity.category().is_foot()
+                    || matches!(
+                        object.driver_rules().operator(),
+                        crate::rules::ares_driver::OperatorRequirement::None
+                    )))
     }
 
     /// `frames`, or fewer when the passive block of `TechnoClass::AI_Update`
@@ -613,7 +621,7 @@ impl Simulation {
     /// checked at each visit ([`Self::infantry_disturbed`]).
     fn infantry_sleep(&self, id: u64, rules: &RuleSet) -> Option<(u32, u8)> {
         use crate::sim::movement::infantry_action::{DO_GUARD, DO_READY};
-        if self.extension_steps_unsorted(rules) || rules.ares() {
+        if self.extension_steps_unsorted(rules) {
             return None;
         }
         let entity = self
@@ -623,11 +631,14 @@ impl Simulation {
             // Not one vt+0x4A0's campaign shroud prelude promotes now.
             .filter(|entity| !self.shroud_prelude_discovers(entity))?;
         let object = self.interner.object_type(entity.type_ref(), rules)?;
+        if !self.ares_steps_rest(entity, object, rules) {
+            return None;
+        }
         let now = self.session.binary_frame();
         let infantry = entity.infantry.as_ref()?;
         let leaf = entity.mission_leaf.as_infantry()?;
         let health = entity.health.current();
-        let idle = infantry_rests(entity, object)
+        let idle = infantry_rests(entity, object, rules.ares())
             && matches!(
                 entity.mission.current().known(),
                 Some(MissionType::Guard | MissionType::AreaGuard)
@@ -687,8 +698,18 @@ impl Simulation {
 /// What a sleeping infantryman's turn finds off in its own state and type,
 /// as [`super::quiet_units::rests`] does for a Unit: no target or order, no
 /// idle frames, at Strength, nothing attached, no clock running.
-fn infantry_rests(entity: &crate::sim::game_entity::GameEntity, object: &ObjectType) -> bool {
+fn infantry_rests(
+    entity: &crate::sim::game_entity::GameEntity,
+    object: &ObjectType,
+    ares: bool,
+) -> bool {
     object.idle_rate == 0
+        // Ares `AirRate` steps an airborne Foot's body counter whatever it
+        // does (FootClass_Update_AnimRate `100493D0`), and so does
+        // `DeployToLand=` (FootClass::AI `0x004DA9CD`), as for a quiet Unit.
+        && (!ares || object.techno_combat().movement().air_rate() == 0)
+        && !object.deploy_to_land
+        && crate::sim::movement::movement_tick::walk_visit_rests(entity)
         && entity.attack_target.target().is_none()
         && entity.navigation.nav_com().is_none()
         && !entity.navigation.destination_setter_owed()
