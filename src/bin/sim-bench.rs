@@ -107,6 +107,12 @@
 //! hosts' files are equal exactly when their simulations stayed identical, so
 //! comparing them checks cross-platform determinism frame by frame.
 //!
+//! `--ini-profile mo` reads the game's INI roots and archives as `config.toml`'s
+//! `[ini] profile` does, and `--ares on|off|auto` is the player's Ares setting
+//! (`util::ares_launch`), for a match or a skirmish: `--ini-profile mo --ares on`
+//! plays Mental Omega, which ships no `ares.mix`, as Ares.dll does. The summary's
+//! `ares=` line says whether Ares played.
+//!
 //! Build with `cargo build --release -p vera20k-core --bin sim-bench`; timings from a debug
 //! build are not meaningful.
 
@@ -117,7 +123,7 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use vera20k_core::assets::asset_manager::{AssetManager, MediaArchiveMode};
+use vera20k_core::assets::asset_manager::{ArchiveFamily, AssetManager, MediaArchiveMode};
 use vera20k_core::headless_scenario::{self, HeadlessScenario, SIM_TICK_MS, battle_session};
 use vera20k_core::map::source::load_map_ini_by_name_or_path_with_assets;
 use vera20k_core::map::waypoints::skirmish_player_capacity;
@@ -171,6 +177,8 @@ struct Args {
     frame_hashes: Option<PathBuf>,
     client_timing: bool,
     presentation_frame: bool,
+    ini: vera20k_core::util::ini_roots::IniRootConfig,
+    ares: vera20k_core::util::ares_launch::AresSetting,
 }
 
 impl Args {
@@ -215,11 +223,17 @@ fn parse_args_from(mut argv: impl Iterator<Item = String>) -> Result<Args, Strin
         frame_hashes: None,
         client_timing: false,
         presentation_frame: false,
+        ini: Default::default(),
+        ares: Default::default(),
     };
     let mut march_flag = None;
+    let mut launch_flag = None;
     while let Some(flag) = argv.next() {
         if ["--types", "--order-spread", "--return-at"].contains(&flag.as_str()) {
             march_flag.get_or_insert_with(|| flag.clone());
+        }
+        if ["--ini-profile", "--ares"].contains(&flag.as_str()) {
+            launch_flag.get_or_insert_with(|| flag.clone());
         }
         let mut value = || argv.next().ok_or(format!("{flag} needs a value"));
         let number = |raw: String| -> Result<u64, String> {
@@ -273,6 +287,12 @@ fn parse_args_from(mut argv: impl Iterator<Item = String>) -> Result<Args, Strin
             "--no-sleep" => args.no_sleep = true,
             "--sleep-check" => args.sleep_check = true,
             "--presentation-frame" => args.presentation_frame = true,
+            "--ini-profile" => args.ini.profile = value()?.parse()?,
+            "--ares" => {
+                let raw = value()?;
+                args.ares = vera20k_core::util::ares_launch::AresSetting::parse(&raw)
+                    .ok_or(format!("unknown Ares setting {raw}: auto, on or off"))?;
+            }
             other => return Err(format!("unrecognised argument {other}")),
         }
     }
@@ -293,6 +313,11 @@ fn parse_args_from(mut argv: impl Iterator<Item = String>) -> Result<Args, Strin
         args.lan = true;
     }
     let marched = args.scenario == ScenarioKind::March;
+    if (marched || args.watchers > 0)
+        && let Some(flag) = launch_flag
+    {
+        return Err(format!("{flag} is a match and skirmish option"));
+    }
     if marched && args.computers.is_some() {
         return Err("--computers is a match and skirmish option".to_string());
     }
@@ -308,13 +333,20 @@ fn parse_args_from(mut argv: impl Iterator<Item = String>) -> Result<Args, Strin
 /// for. A map's `[Basic] MaxPlayers` (9 to 30) raises it past the eight
 /// retail starts, up to 29 computer houses beside the local one.
 fn seated_computers(args: &Args) -> Result<usize, String> {
-    let assets =
-        AssetManager::new(&args.ra2_dir, MediaArchiveMode::STOCK_DIGITAL).map_err(|error| {
-            format!(
-                "open retail MIX archives in {}: {error}",
-                args.ra2_dir.display()
-            )
-        })?;
+    let assets = AssetManager::with_mod_and_ares(
+        &args.ra2_dir,
+        None,
+        MediaArchiveMode::STOCK_DIGITAL,
+        args.ares,
+        ArchiveFamily::for_ini_profile(args.ini.profile),
+    )
+    .and_then(|assets| assets.with_ini_roots(&args.ini))
+    .map_err(|error| {
+        format!(
+            "open retail MIX archives in {}: {error}",
+            args.ra2_dir.display()
+        )
+    })?;
     let map = load_map_ini_by_name_or_path_with_assets(&args.ra2_dir, &args.map, &assets)
         .map_err(|error| format!("read map {}: {error}", args.map))?;
     let most = usize::try_from(skirmish_player_capacity(&map.ini) - 1)
@@ -861,11 +893,13 @@ fn main() -> Result<(), String> {
         ScenarioKind::March => headless_scenario::load(&args.ra2_dir, &args.map, args.seed)?,
         ScenarioKind::Match => {
             let computers = computers.min(args.houses.unwrap_or(usize::MAX));
-            headless_scenario::load_session(
+            headless_scenario::load_session_as(
                 &args.ra2_dir,
                 &args.map,
                 args.seed,
                 sim_bench_match::session(&args.map, computers),
+                &args.ini,
+                args.ares,
             )?
         }
         ScenarioKind::Skirmish if args.watchers > 0 => headless_scenario::load_with_launch_and_ini(
@@ -883,11 +917,13 @@ fn main() -> Result<(), String> {
             None,
             None,
         )?,
-        ScenarioKind::Skirmish => headless_scenario::load_session(
+        ScenarioKind::Skirmish => headless_scenario::load_session_as(
             &args.ra2_dir,
             &args.map,
             args.seed,
             battle_session(&args.map, &sim_bench_match::COMPUTER_ROSTER[..computers]),
+            &args.ini,
+            args.ares,
         )?,
     };
     if !args.serial_paths {
