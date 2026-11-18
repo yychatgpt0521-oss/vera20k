@@ -802,6 +802,29 @@ impl MovementPassCache {
     }
 }
 
+/// Walk75AEC0 is the Process of every live Foot (FootClass::AI
+/// 0x004DA806..0x004DA877) and branches on its own head (+0x28) and
+/// destination (+0x1C): either one runs its step, neither the idle tail
+/// 75BCE3 (Walk75AEC3..75AF10).
+fn walk_route(entity: &crate::sim::game_entity::GameEntity) -> bool {
+    entity.locomotor.as_ref().is_some_and(|loco| {
+        loco.active_kind() == LocomotorKind::Walk
+            && (loco.step_head().is_some() || loco.walk_destination().is_some())
+    })
+}
+
+/// Whether `entity`'s Walk visit writes nothing: no head or destination
+/// runs a step, and the idle tail has nothing to clear. A Walk waiting out
+/// a blockage with no head is not moving now, but still steps. Other
+/// locomotors answer true.
+pub(crate) fn walk_visit_rests(entity: &crate::sim::game_entity::GameEntity) -> bool {
+    let walks = entity
+        .locomotor
+        .as_ref()
+        .is_some_and(|loco| loco.active_kind() == LocomotorKind::Walk);
+    !walks || (!walk_route(entity) && !super::walk_step::finish_idle_writes(entity))
+}
+
 /// The visit's entry work, run once before the ordinary mover advances.
 /// Resuming after a world callback must not repeat it: it runs the idle
 /// Walk tail. Returns whether the object still advances as an ordinary
@@ -810,14 +833,7 @@ fn prepare_movement_visit(entities: &mut EntityStore, entity_id: u64) -> bool {
     let Some(entity) = entities.get(entity_id) else {
         return false;
     };
-    // Walk75AEC0 is the Process of every live Foot (FootClass::AI
-    // 0x004DA806..0x004DA877) and branches on its own head (+0x28) and
-    // destination (+0x1C): either one runs its step, neither the idle tail
-    // 75BCE3 (Walk75AEC3..75AF10).
-    let walk_route = entity.locomotor.as_ref().is_some_and(|loco| {
-        loco.active_kind() == LocomotorKind::Walk
-            && (loco.step_head().is_some() || loco.walk_destination().is_some())
-    });
+    let walk_route = walk_route(entity);
     let idle_tail = entity.is_active() && !walk_route;
     // A Drive or Ship got here through the outer Process gates
     // (`track_turn`: Drive 0x4B08D1..0x4B0A69 / Ship 0x69FF98..0x6A0131),

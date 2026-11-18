@@ -2078,6 +2078,24 @@ impl Simulation {
         }
     }
 
+    /// Whether [`Self::update_techno_discovery_from_shroud`] promotes
+    /// `entity`'s +41B on this visit: in a campaign with a current player and
+    /// a map, an object the player has not discovered whose GetCoords the
+    /// player's shroud no longer covers.
+    pub(crate) fn shroud_prelude_discovers(&self, entity: &GameEntity) -> bool {
+        if self.session.game_mode_nonzero() || entity.discovery.discovered_by_current_house {
+            return false;
+        }
+        let (Some(player), Some(terrain)) =
+            (self.session.current_house(), self.resolved_terrain.as_ref())
+        else {
+            return false;
+        };
+        let coords = crate::sim::movement::ground_pose::object_get_coords(entity, Some(terrain));
+        let cells = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain);
+        !crate::sim::vision::point_is_shrouded(&self.fog, &cells, player, coords)
+    }
+
     /// TechnoClass virtual+4A0 (`0x0070D990`), shared by all represented
     /// subclasses: its campaign-only prelude (`70D997..70D9C6`) promotes
     /// +41B when MapClass::IsShrouded586360 at GetCoords is false. Source:
@@ -2085,23 +2103,12 @@ impl Simulation {
     /// only the history byte: no Tag, House dirty write, RNG, timer or detach.
     /// A mapless/current-player-less component fixture has no Map receiver.
     pub(crate) fn update_techno_discovery_from_shroud(&mut self, id: u64) {
-        if self.session.game_mode_nonzero() {
-            return;
-        }
-        let (Some(player), Some(terrain)) =
-            (self.session.current_house(), self.resolved_terrain.as_ref())
-        else {
-            return;
-        };
-        let Some(entity) = self.substrate.entities.get(id) else {
-            return;
-        };
-        if entity.discovery.discovered_by_current_house {
-            return;
-        }
-        let coords = crate::sim::movement::ground_pose::object_get_coords(entity, Some(terrain));
-        let cells = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain);
-        if !crate::sim::vision::point_is_shrouded(&self.fog, &cells, player, coords) {
+        if self
+            .substrate
+            .entities
+            .get(id)
+            .is_some_and(|entity| self.shroud_prelude_discovers(entity))
+        {
             self.substrate
                 .entities
                 .get_mut(id)

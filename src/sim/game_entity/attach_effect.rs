@@ -113,6 +113,17 @@ struct AttachedStats {
 }
 
 impl GameEntity {
+    /// Whether the Ares attachment update (TechnoClass_Update `1004B434`)
+    /// finds nothing to do: no attached effect and no self effect waiting to
+    /// attach.
+    pub(crate) fn ares_attach_effects_rest(&self) -> bool {
+        self.ares.attach_effects.entries.is_empty()
+            && !matches!(
+                self.ares.attach_effects.self_effect,
+                SelfEffectState::Pending(_)
+            )
+    }
+
     fn attached_stats_from_entries(
         &self,
         rules: &crate::rules::ruleset::RuleSet,
@@ -834,12 +845,7 @@ mod receiver {
             {
                 return;
             }
-            if victim.ares.attach_effects.entries.is_empty()
-                && !matches!(
-                    victim.ares.attach_effects.self_effect,
-                    SelfEffectState::Pending(_)
-                )
-            {
+            if victim.ares_attach_effects_rest() {
                 return;
             }
             let own_origin = EffectOrigin::for_type(victim);

@@ -172,6 +172,46 @@ pub fn load_session(
     load_with_launch(retail_dir, map_file_name, seed, launch)
 }
 
+/// [`load_session`] as a launch with `ini`'s roots and the player's Ares
+/// setting opens the game (`AssetManager::with_mod_and_ares`, the archive
+/// family of `ini`'s profile): Mental Omega, which ships no `ares.mix`, under
+/// `profile = "mo"` with Ares On.
+pub fn load_session_as(
+    retail_dir: &Path,
+    map_file_name: &str,
+    seed: u32,
+    session: SkirmishLaunchSession,
+    ini: &crate::util::ini_roots::IniRootConfig,
+    ares: crate::util::ares_launch::AresSetting,
+) -> Result<HeadlessScenario, String> {
+    let launch = crate::sim::scenario_bootstrap::MatchLaunchDescriptor::from_resolved(session)
+        .map_err(|error| format!("resolve Battle launch: {error}"))?;
+    let mut assets = AssetManager::with_mod_and_ares(
+        retail_dir,
+        None,
+        MediaArchiveMode::STOCK_DIGITAL,
+        ares,
+        crate::assets::asset_manager::ArchiveFamily::for_ini_profile(ini.profile),
+    )
+    .and_then(|assets| assets.with_ini_roots(ini))
+    .map_err(|error| {
+        format!(
+            "open retail MIX archives in {}: {error}",
+            retail_dir.display()
+        )
+    })?;
+    load_with_assets(
+        retail_dir,
+        map_file_name,
+        seed,
+        launch,
+        &mut assets,
+        crate::sim::scenario_session::ScenarioGameMode::Skirmish,
+        None,
+        None,
+    )
+}
+
 /// Run the same construction and bound-resource handoff with an explicit
 /// resolved launch. The quickplay regression uses its real app descriptor here
 /// so house creation and starting forces cannot drift from the tested session.

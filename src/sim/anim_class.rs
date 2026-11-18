@@ -3698,6 +3698,7 @@ impl Simulation {
     }
 
     pub(crate) fn update_building_damage_fire(&mut self, building_id: u64, rules: &RuleSet) {
+        // Building43FC39..43FC84 (see building_damage_fires_due).
         let Some((current, type_ref, position, prior_state, category)) =
             self.substrate.entities.get(building_id).map(|entity| {
                 (
@@ -3717,21 +3718,11 @@ impl Simulation {
         let Some(object_type) = self.object_type(type_ref, rules) else {
             return;
         };
-        let maximum = object_type.strength;
-        let can_be_occupied = object_type.can_be_occupied;
         // Borrowed from the rules, which outlive this visit: the image and
         // foundation are read only when the fires start.
         let image = &object_type.image;
         let foundation = &object_type.foundation;
-        let ratio = if can_be_occupied {
-            rules.general.condition_red
-        } else {
-            rules.general.condition_yellow
-        };
-        // Building43FC39..43FC84: CanBeOccupied selects red versus yellow;
-        // TEST AH,0x41 includes unordered, with no HP/Strength positivity gate.
-        let active = crate::sim::combat::Health::new(current).compare_ratio(maximum, ratio)
-            != crate::util::native_x87::MaskedX87Ordering::Greater;
+        let active = building_damage_fires_due(object_type, current, rules);
         if active == prior_state {
             return;
         }
@@ -8676,3 +8667,21 @@ pub(in crate::sim) mod meteor_tests;
 #[cfg(all(test, tests_sim_a_b))]
 #[path = "anim_damage_tests.rs"]
 mod damage_tests;
+
+/// Whether a building of type `object` at Health `current` burns
+/// (`BuildingClass::Update @ 0x0043FC39..0x0043FC84`): CanBeOccupied
+/// selects ConditionRed over ConditionYellow, and `TEST AH,0x41` counts an
+/// unordered compare, with no HP/Strength positivity gate.
+pub(crate) fn building_damage_fires_due(
+    object: &crate::rules::object_type::ObjectType,
+    current: i32,
+    rules: &RuleSet,
+) -> bool {
+    let ratio = if object.can_be_occupied {
+        rules.general.condition_red
+    } else {
+        rules.general.condition_yellow
+    };
+    crate::sim::combat::Health::new(current).compare_ratio(object.strength, ratio)
+        != crate::util::native_x87::MaskedX87Ordering::Greater
+}

@@ -82,6 +82,306 @@ fn a_sleeping_building_matches_its_awake_twin_hash_by_hash() {
     );
 }
 
+/// In a campaign `TechnoClass` vt+0x4A0's shroud prelude tests an
+/// undiscovered object on every visit and discovers it once the player's
+/// shroud no longer covers it. Another house's building sleeps under the
+/// player's shroud, wakes on the visit the player's map is revealed, is
+/// discovered then as its awake twin is, and sleeps again.
+#[test]
+fn a_campaign_building_sleeps_under_the_shroud_until_revealed() {
+    let rules = rules();
+    let campaign = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Campaign);
+        let player = sim.interner.intern("Russians");
+        sim.session.set_current_house_for_test(Some(player));
+        sim.fog = crate::sim::vision::FogState::new(32, 32);
+        (sim, grid, player)
+    };
+    let discovered = |sim: &Simulation| {
+        sim.substrate
+            .entities
+            .get(1)
+            .unwrap()
+            .discovery
+            .discovered_by_current_house()
+    };
+    let (mut asleep, grid, player) = campaign(true);
+    let (mut awake, awake_grid, _) = campaign(false);
+    let mut slept_hidden = 0;
+    for frame in 0..200 {
+        if frame == 90 {
+            slept_hidden = asleep.idle_sleep_counts().1;
+            asleep.fog.reveal_all_for_owner(player);
+            awake.fog.reveal_all_for_owner(player);
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+        assert_eq!(discovered(&asleep), discovered(&awake), "frame {frame}");
+    }
+    assert!(
+        slept_hidden > 50,
+        "under the shroud it slept {slept_hidden} visits"
+    );
+    assert!(discovered(&asleep));
+    assert!(
+        asleep.idle_sleep_counts().1 > slept_hidden + 50,
+        "discovered, it sleeps again"
+    );
+}
+
+/// A resting building's whole turn hands nothing out for writing, so no
+/// reader of the store's touch logs re-derives it. Ares builds add per-visit
+/// steps (EMP, bounty, passenger turret, delayed prism fire, reload) that
+/// find nothing to do for it, so they hand it out neither.
+#[test]
+fn a_resting_buildings_turn_writes_nothing() {
+    // Where Ares plays, its per-visit steps run on every Techno turn.
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    use crate::sim::entity_store::TouchReader;
+    use crate::sim::touch_log::Touched;
+    let rules = rules();
+    let (mut sim, grid) = power_plant(&rules, false);
+    for _ in 0..40 {
+        tick(&mut sim, &rules, &grid);
+    }
+    let _ = sim
+        .substrate
+        .entities
+        .take_touched(TouchReader::ExpiryListeners);
+    tick(&mut sim, &rules, &grid);
+    let touched = sim
+        .substrate
+        .entities
+        .take_touched(TouchReader::ExpiryListeners);
+    assert!(
+        matches!(&touched, Touched::Ids(ids) if !ids.contains(&1)),
+        "the plant's turn handed it out: {touched:?}"
+    );
+}
+
+/// An Ares build sleeps a plain building, but one whose Ares per-visit step
+/// has work stays awake: a `SensorArray=` building, whose array the
+/// Building Update hook re-checks every visit (Ares.dll `10016E30`).
+#[test]
+fn an_ares_sensor_array_stays_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nSensorArray=yes\n",
+    ))
+    .expect("sensor array rules parse");
+    let (mut sim, grid) = power_plant(&rules, true);
+    for _ in 0..120 {
+        tick(&mut sim, &rules, &grid);
+    }
+    assert_eq!(sim.idle_sleep_counts(), (0, 0));
+}
+
+/// The Ares Reload clock (BuildingClass_Update_Reload `100478E0`) reloads a
+/// building's rounds by its own timer: one with a round to reload stays
+/// awake until its count is full.
+#[test]
+fn an_ares_building_with_a_round_to_reload_stays_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nAmmo=5\nInitialAmmo=0\nReload=400\n",
+    ))
+    .expect("reload rules parse");
+    let (mut sim, grid) = power_plant(&rules, true);
+    for _ in 0..120 {
+        tick(&mut sim, &rules, &grid);
+    }
+    assert_eq!(sim.idle_sleep_counts(), (0, 0));
+}
+
+/// An armed defense without a turret, Overpowerable with no charger, sleeps
+/// between its own timers: its
+/// Guard handler's AARate re-arm with its Scenario draw
+/// (`BuildingClass::Mission_Guard @ 0x004496B0`) and its passive scan
+/// (`TechnoClass::AI_Update @ 0x006FA65A`) run on the frames they would
+/// awake. A tank that appears in range at frame 120 is taken and fired at
+/// on the same frames as by the awake twin.
+#[test]
+fn an_armed_defense_sleeps_between_its_guard_and_scan_timers() {
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\nNormalTargetingDelay=27\nGuardAreaTargetingDelay=36\n\n\
+         [InfantryTypes]\n[AircraftTypes]\n[VehicleTypes]\n0=MTNK\n\
+         [BuildingTypes]\n0=GAPILL\n\n\
+         [GAPILL]\nStrength=400\nArmor=wood\nFoundation=1x1\nSight=6\n\
+         HasStupidGuardMode=no\nPrimary=105mm\nOverpowerable=yes\n\n\
+         [MTNK]\nLocomotor={4A582741-9839-11d1-B709-00A024DDAFD1}\n\
+         Strength=300\nArmor=heavy\nSpeed=6\nSight=10\n\n\
+         [105mm]\nDamage=65\nROF=50\nRange=5\nWarhead=AP\n\n\
+         [AP]\nVerses=100%,100%,90%,75%,75%,75%,60%,30%,20%,0%,0%\n",
+    ))
+    .expect("armed defense rules parse");
+    let defense = |sleep| {
+        let mut sim = Simulation::with_seed(0x51EE_9000_0002);
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Skirmish);
+        let grid = crate::sim::arena_fixture::flat_ground(&mut sim, &rules);
+        let entity = |owner: &str, type_id: &str, x, y, category| MapEntity {
+            owner: owner.to_string(),
+            type_id: type_id.to_string(),
+            health: 256,
+            cell_x: x,
+            cell_y: y,
+            facing: 64,
+            category,
+            sub_cell: 0,
+            veterancy: Some(0),
+            high: false,
+            mission: None,
+            trigger_tag: None,
+            recruitable_a: true,
+            recruitable_b: true,
+            group: -1,
+            follows: None,
+            structure_columns: Default::default(),
+            structure_ai_sellable: false,
+            structure_ai_repairable: false,
+            structure_online: true,
+        };
+        let pill = entity("Americans", "GAPILL", 10, 10, EntityCategory::Structure);
+        sim.spawn_from_map(&[pill], Some(&rules));
+        sim.sleep_idle_objects(sleep);
+        (sim, grid)
+    };
+    let (mut asleep, grid) = defense(true);
+    let (mut awake, awake_grid) = defense(false);
+    let mut slept = 0;
+    for frame in 0..300 {
+        if frame == 120 {
+            slept = asleep.idle_sleep_counts().1;
+            for sim in [&mut asleep, &mut awake] {
+                sim.spawn_object("MTNK", "Russians", 13, 10, 0, &rules)
+                    .unwrap();
+            }
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(
+            asleep.state_hash(),
+            awake.state_hash(),
+            "the twins differ after frame {frame}"
+        );
+    }
+    assert!(slept > 60, "the idle defense slept {slept} visits");
+    let tank = awake
+        .substrate
+        .entities
+        .values()
+        .find(|entity| entity.category() == EntityCategory::Unit)
+        .expect("the tank");
+    assert!(
+        tank.health.current() < 300,
+        "the defense took and hit the tank"
+    );
+}
+
+/// A damaged building with nothing to heal or repair it sleeps, burning as
+/// it does at half Strength (its damage fire cache holds). When its
+/// owner's IQ comes to admit the computer's repair branch of
+/// `UpdateRepairAndPower` (`0x00450630`) it wakes on the owner note and
+/// starts its repair on the awake twin's frame.
+#[test]
+fn a_damaged_building_sleeps_until_its_owner_would_repair_it() {
+    let rules = rules();
+    let damaged = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        let plant = sim.substrate.entities.get_mut(1).unwrap();
+        plant.health.set_for_test(375);
+        // A map's `AIRepairable` building, which the computer may repair.
+        plant.ai_sell_repair.set_ai_repairable_for_test(true);
+        let owner = sim.interner.get("Americans").unwrap();
+        // A computer house with money, below `[IQ] RepairSell=` for now.
+        sim.houses
+            .register(crate::sim::house_state::HouseState::new(
+                owner, 0, None, false, 5000, 10,
+            ));
+        sim.houses
+            .get_mut(&owner)
+            .unwrap()
+            .set_current_iq_for_test(0);
+        (sim, grid, owner)
+    };
+    let (mut asleep, grid, owner) = damaged(true);
+    let (mut awake, awake_grid, _) = damaged(false);
+    let mut slept = 0;
+    for frame in 0..200 {
+        if frame == 90 {
+            slept = asleep.idle_sleep_counts().1;
+            for sim in [&mut asleep, &mut awake] {
+                let iq = rules.general.iq_repair_sell;
+                sim.houses
+                    .get_mut(&owner)
+                    .unwrap()
+                    .set_current_iq_for_test(iq);
+            }
+        }
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+    }
+    assert!(slept > 50, "the damaged plant slept {slept} visits");
+    let repairing = |sim: &Simulation| {
+        sim.substrate
+            .entities
+            .get(1)
+            .unwrap()
+            .building
+            .repairing
+            .is_on()
+    };
+    assert!(
+        repairing(&awake) && repairing(&asleep),
+        "both repair once admitted"
+    );
+}
+
+/// A damaged building that sparks (Ares `DamageSparks=`, a `Spark` system in
+/// `DamageParticleSystems=`) draws from the Scenario stream every visit until
+/// a spark system is linked (TechnoAI `0x006FACD9`, Ares `1004B760`): it
+/// stays awake through those draws and matches its awake twin.
+#[test]
+fn a_sparking_damaged_building_draws_awake() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let rules = RuleSet::from_ini(&IniFile::from_str(
+        "[General]\n[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n\
+         [BuildingTypes]\n0=GAPOWR\n\n\
+         [GAPOWR]\nStrength=750\nArmor=wood\nFoundation=2x2\nSight=5\nPower=100\n\
+         PoweredSpecial=yes\nDamageSparks=yes\nDamageParticleSystems=SparkSys\n\n\
+         [Particles]\n1=Spark1\n\n[ParticleSystems]\n1=SparkSys\n\n\
+         [SparkSys]\nHoldsWhat=Spark1\nBehavesLike=Spark\n\n[Spark1]\nBehavesLike=Spark\n",
+    ))
+    .expect("spark rules parse");
+    let damaged = |sleep| {
+        let (mut sim, grid) = power_plant(&rules, sleep);
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .health
+            .set_for_test(300);
+        (sim, grid)
+    };
+    let (mut asleep, grid) = damaged(true);
+    let (mut awake, awake_grid) = damaged(false);
+    for frame in 0..200 {
+        tick(&mut asleep, &rules, &grid);
+        tick(&mut awake, &rules, &awake_grid);
+        assert_eq!(asleep.state_hash(), awake.state_hash(), "frame {frame}");
+    }
+}
+
 #[test]
 fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
     let rules = rules();
@@ -91,6 +391,32 @@ fn every_turn_sleeping_would_skip_changes_only_the_owed_counters() {
         tick(&mut sim, &rules, &grid);
     }
     assert!(sim.idle_sleep_counts().1 > 200);
+}
+
+/// `VERA20K_IDLE_SLEEP`: unset sleeps, `0` stays awake, `check` sleeps and
+/// checks, so a played match can prove sleeping changed nothing; `check:N`
+/// compares the state hash on every Nth checked visit only.
+#[test]
+fn the_match_setting_check_sleeps_and_checks() {
+    let rules = rules();
+    let (mut sim, _) = power_plant(&rules, false);
+    for (setting, on, checking, hash_every) in [
+        (None, true, false, 1),
+        (Some("0"), false, false, 1),
+        (Some("check"), true, true, 1),
+        (Some("check:64"), true, true, 64),
+    ] {
+        sim.sleep_idle_objects_as(setting.map(std::ffi::OsStr::new));
+        assert_eq!(
+            (
+                sim.idle_sleep.is_on(),
+                sim.idle_sleep.is_checking(),
+                sim.idle_sleep.hash_every()
+            ),
+            (on, checking, hash_every),
+            "VERA20K_IDLE_SLEEP={setting:?}"
+        );
+    }
 }
 
 #[test]
@@ -316,5 +642,30 @@ fn radiation_in_a_sleeping_gis_cell_wakes_it() {
             sim.resolved_terrain.as_ref(),
             &mut sim.lighting_sources,
         );
+    });
+}
+
+/// A GI on Guard holding a Walk destination while it waits out a path
+/// blockage has no step head, so it is not moving now; Walk75AEC0 still
+/// steps for the destination, so it stays awake and repaths when the
+/// movement timer runs out.
+#[test]
+fn a_gi_waiting_out_a_blockage_stays_awake() {
+    let Some(fixture) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+        return;
+    };
+    gi_twins(&fixture.rules, 300, 200, |sim, gi| {
+        // As a match runs.
+        sim.batch_path_searches();
+        let now = sim.session.binary_frame();
+        let entity = sim.substrate.entities.get_mut(gi).expect("the GI lives");
+        entity
+            .locomotor
+            .as_mut()
+            .expect("the GI walks")
+            .set_walk_destination(Some(crate::sim::components::DriveCoord::cell(24, 16, 0)));
+        let path = entity.navigation.path_runtime_mut();
+        path.latch_blockage(now, 60);
+        path.start_movement(now, 30);
     });
 }

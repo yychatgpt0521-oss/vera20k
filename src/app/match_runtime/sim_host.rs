@@ -255,9 +255,16 @@ impl SimHost {
     fn report_early_returns(&mut self) {
         if self.lent_jobs > 0 {
             let costs = self.snapshot_costs.take();
+            // How many objects sleep now, and how many visits sleeping has
+            // counted instead of run (`sim::world::idle_sleep`).
+            let (asleep, counted) = self
+                .runtime
+                .as_ref()
+                .map_or((0, 0), |runtime| runtime.simulation.idle_sleep_counts());
             log::info!(
                 "Simulation thread: {} of the last {} ticks were taken back early; \
-                 frame capture {:.3} ms mean over {}, world copy {:.3} ms mean over {}",
+                 frame capture {:.3} ms mean over {}, world copy {:.3} ms mean over {}; \
+                 idle sleep: {asleep} asleep, {counted} visits counted",
                 self.early_returns,
                 self.lent_jobs,
                 costs.capture_ms(),
@@ -446,6 +453,17 @@ impl SimHost {
     pub(crate) fn tick_parts(&mut self) -> Option<(&mut SimRuntime, &mut FrameChecksumState)> {
         self.reclaim(true);
         self.forget_frame();
+        let runtime = self.runtime.as_mut()?;
+        Some((runtime, &mut self.frame_checksums))
+    }
+
+    /// [`Self::tick_parts`] for a tick about to be lent ([`Self::lend`]):
+    /// what the caller sets before it (the tick's voice visits, hash cadence
+    /// and profiling) is none of what the frame shows, and the tick itself
+    /// runs on the simulation thread, so the frame captured since the last
+    /// write stands as the one the lend publishes.
+    pub(crate) fn lend_parts(&mut self) -> Option<(&mut SimRuntime, &mut FrameChecksumState)> {
+        self.reclaim(true);
         let runtime = self.runtime.as_mut()?;
         Some((runtime, &mut self.frame_checksums))
     }
@@ -849,6 +867,23 @@ mod tests {
             .mark_radar_terrain_dirty_for_test([(3, 4)]);
         assert_eq!(host.take_radar_terrain_marks(), Some(vec![(3, 4)]));
         assert!(host.take_radar_terrain_marks().is_none());
+    }
+
+    /// Setting up a tick to lend writes nothing a frame shows: the lend
+    /// publishes the frame the draw captured, where a tick's own setup
+    /// makes it capture again.
+    #[test]
+    fn setting_up_a_lent_tick_keeps_the_captured_frame() {
+        let mut host = SimHost::default();
+        host.install(Some(SimRuntime::from_simulation(Simulation::new())));
+        let captures = |host: &SimHost| host.snapshot_costs.get().captures;
+        assert!(host.frame().is_some());
+        let _ = host.lend_parts();
+        assert!(host.lend(Box::new(|_| Box::new(()))));
+        assert_eq!(captures(&host), 1);
+        let _ = host.tick_parts();
+        assert!(host.frame().is_some());
+        assert_eq!(captures(&host), 2);
     }
 
     #[test]

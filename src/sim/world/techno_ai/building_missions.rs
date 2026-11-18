@@ -1207,10 +1207,16 @@ pub(super) fn gattling_idle(
     let now = session.binary_frame() as i32;
     let refills = !obj.hospital && !obj.armory();
     // Only a Gattling type, or an empty count it refills, changes anything.
-    // Ares reloads by its own clock, so there every refilling type is taken.
+    // Ares reloads by its own clock (TechnoClass::Reload), which writes only
+    // when a round is due.
     let Some(entity) = substrate.entities.get_mut_if(id, |entity| {
         obj.is_gattling
-            || (refills && (rules.ares() || entity.ammo().is_some_and(TechnoAmmo::is_empty)))
+            || (refills
+                && if rules.ares() {
+                    entity.techno_ammo_reloads(obj, now)
+                } else {
+                    entity.ammo().is_some_and(TechnoAmmo::is_empty)
+                })
     }) else {
         return;
     };

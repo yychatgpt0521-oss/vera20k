@@ -102,20 +102,17 @@ impl Simulation {
         spawned
     }
 
-    /// Cyborg-only TechnoAI6FACD9..6FAEDA. Stock YR leaves Cyborg unset, so
-    /// ordinary damaged vehicles never enter this producer. Both it and
-    /// FireAt use the actual +308 link and the one system constructor.
-    pub(crate) fn update_damage_spark_after_ai(&mut self, id: u64, rules: &RuleSet) {
-        use crate::util::native_x87::{MaskedX87Chop53 as X87, MaskedX87Ordering, NativeF64Bits};
-
-        let Some(entity) = self.substrate.entities.get(id) else {
-            return;
-        };
-        let Some(object) = self.object_type(entity.type_ref(), rules) else {
-            return;
-        };
-        // Ares TechnoClass_Update_DamageSparks (Ares.dll 1004B760, hook
-        // 0x6FACD9): the type's `DamageSparks`, else its own flag.
+    /// Whether [`Self::update_damage_spark_after_ai`] draws for `entity` this
+    /// visit (TechnoAI `6FACD9..6FAE11`): its type sparks (Ares
+    /// TechnoClass_Update_DamageSparks `1004B760`, hook `0x6FACD9`: the
+    /// type's `DamageSparks`, else its own flag), it is below ConditionYellow
+    /// and above height -10, holds no spark system and lists a Spark one.
+    pub(crate) fn damage_spark_draws(
+        &self,
+        entity: &crate::sim::game_entity::GameEntity,
+        object: &crate::rules::object_type::ObjectType,
+        rules: &RuleSet,
+    ) -> bool {
         let sparks = if rules.ares_form() {
             object
                 .techno_combat()
@@ -124,38 +121,32 @@ impl Simulation {
         } else {
             object.emits_damage_spark()
         };
-        if !sparks {
-            return;
-        }
-        let ratio = entity.health.ratio(object.strength);
-        let below = |threshold: f64| {
-            matches!(
-                X87::compare(
-                    ratio,
-                    X87::load_f64(NativeF64Bits::from_bits(threshold.to_bits()))
-                ),
-                MaskedX87Ordering::Less | MaskedX87Ordering::Unordered
+        sparks
+            && health_ratio_below(
+                entity.health.ratio(object.strength),
+                rules.general.condition_yellow,
             )
+            && Self::damage_particle_owner_height(&self.resolved_terrain, entity) > -10
+            && entity.spark_particle_system.system().is_none()
+            && !damage_spark_systems(object, rules).is_empty()
+    }
+
+    /// Cyborg-only TechnoAI6FACD9..6FAEDA. Stock YR leaves Cyborg unset, so
+    /// ordinary damaged vehicles never enter this producer. Both it and
+    /// FireAt use the actual +308 link and the one system constructor.
+    pub(crate) fn update_damage_spark_after_ai(&mut self, id: u64, rules: &RuleSet) {
+        let Some(entity) = self.substrate.entities.get(id) else {
+            return;
         };
-        if !below(rules.general.condition_yellow)
-            || Self::damage_particle_owner_height(&self.resolved_terrain, entity) <= -10
-            || entity.spark_particle_system.system().is_some()
-        {
+        let Some(object) = self.object_type(entity.type_ref(), rules) else {
+            return;
+        };
+        if !self.damage_spark_draws(entity, object, rules) {
             return;
         }
-        // 6FAD51..6FADA1 retains Spark entries in authored list order.
-        let systems: Vec<_> = object
-            .damage_particle_systems
-            .iter()
-            .filter_map(|name| rules.ps_type_id_by_name(name))
-            .filter(|&type_id| {
-                rules.particle_system_type(type_id).behaves_like == ParticleSystemBehavesLike::Spark
-            })
-            .collect();
-        if systems.is_empty() {
-            return;
-        }
-        let threshold = if below(rules.general.condition_red) {
+        let systems = damage_spark_systems(object, rules);
+        let ratio = entity.health.ratio(object.strength);
+        let threshold = if health_ratio_below(ratio, rules.general.condition_red) {
             rules.general.condition_red_spark_threshold
         } else {
             rules.general.condition_yellow_spark_threshold
@@ -1314,4 +1305,32 @@ mod tests {
         assert_eq!(rules.particle_type(particle.type_id()).name, "");
         assert_eq!(particle.lifetime_remaining(), 1);
     }
+}
+
+/// A health ratio below `threshold`, unordered included (TechnoAI's
+/// `0x006FACD9..0x006FAE11` compares).
+fn health_ratio_below(ratio: crate::util::native_x87::MaskedX87Value, threshold: f64) -> bool {
+    use crate::util::native_x87::{MaskedX87Chop53 as X87, MaskedX87Ordering, NativeF64Bits};
+    matches!(
+        X87::compare(
+            ratio,
+            X87::load_f64(NativeF64Bits::from_bits(threshold.to_bits()))
+        ),
+        MaskedX87Ordering::Less | MaskedX87Ordering::Unordered
+    )
+}
+
+/// The type's Spark systems in authored list order (`6FAD51..6FADA1`).
+fn damage_spark_systems(
+    object: &crate::rules::object_type::ObjectType,
+    rules: &RuleSet,
+) -> Vec<crate::sim::particles::ParticleSystemTypeId> {
+    object
+        .damage_particle_systems
+        .iter()
+        .filter_map(|name| rules.ps_type_id_by_name(name))
+        .filter(|&type_id| {
+            rules.particle_system_type(type_id).behaves_like == ParticleSystemBehavesLike::Spark
+        })
+        .collect()
 }
