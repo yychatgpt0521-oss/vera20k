@@ -57,7 +57,7 @@ pub(crate) fn map_in_order<T: Sync, R: Send>(
 /// [`map`] with scratch: each worker takes its own clone of `init` and keeps
 /// it across the items it takes, so `work` may cache in it answers that do
 /// not depend on the item.
-pub(crate) fn map_with<T: Sync, S: Clone + Send, R: Send>(
+pub fn map_with<T: Sync, S: Clone + Send, R: Send>(
     items: &[T],
     init: S,
     work: impl Fn(&mut S, &T) -> R + Sync,
