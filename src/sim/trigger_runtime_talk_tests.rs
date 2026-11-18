@@ -99,9 +99,7 @@ fn dispatch(
         .unwrap()
         .entries()[0]
         .clone();
-    let action = sim
-        .trigger_runtime
-        .definitions
+    let action = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .resolve_action(entry, None, None, None);
     assert_eq!(action.reference, reference);
     assert_eq!(action.value, Some(value));
@@ -146,7 +144,7 @@ fn talk_dispatch_uses_first_team_head_and_current_player_reveal_without_rng() {
     let index = defs.team_type("TEST_TEAM").unwrap();
     let missing = defs.team_type("MISSING").unwrap();
     sim.interner.intern("MISSING");
-    sim.trigger_runtime.definitions = defs;
+    sim.trigger_runtime.definitions = std::sync::Arc::new(defs);
     let streams = (
         sim.scenario_rng.native_state_hex(),
         sim.main_rng.native_state_hex(),
@@ -279,7 +277,7 @@ fn talk_reveal_passes_native_s28_height_gate_to_the_shared_visibility_owner() {
         let mut defs = RuntimeDefinitions::default();
         defs.trigger_type("SPEECH").unwrap();
         let ty = defs.team_type("TEST_TEAM").unwrap();
-        sim.trigger_runtime.definitions = defs;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(defs);
         assert!(!sim.fog.is_cell_revealed(houses[0], 16, 15));
         assert!(dispatch(&mut sim, &rules, Some(DefinitionReference::Team(ty)), 1).0);
         assert_eq!(

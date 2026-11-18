@@ -15,7 +15,9 @@ fn install(sim: &mut Simulation, rules: &RuleSet, kind: i32, country: i32) -> (u
              [Actions]\nNOTIFY=1,28,0,7,0,0,0,0,A\n[Tags]\nTAG=2,Notify,NOTIFY\n"
         ),
     );
-    let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type("TAG")
+        .unwrap();
     let tag = sim.shared_trigger_tag(typ);
     (tag, sim.trigger_runtime.tag(tag).unwrap().triggers[0])
 }
@@ -156,8 +158,10 @@ fn house_notification_predicates_replay_twenty_original_controls() {
                 .reorder_for_test(&order.map(|i| houses[i]).to_vec());
             let (_, live) = install(&mut sim, &rules, kind, country);
             let type_index = sim.trigger_runtime.trigger(live).unwrap().type_index;
-            sim.trigger_runtime.definitions.trigger_types[type_index].events[0].retained_house =
-                Some(houses[1]);
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [type_index]
+                .events[0]
+                .retained_house = Some(houses[1]);
             let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
             let before = sim.state_hash();
             let rng = sim.rng_state();
@@ -184,7 +188,10 @@ fn house_notification_predicates_replay_twenty_original_controls() {
             assert_eq!(persistence, prior, "event{kind}/{name}");
             assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
             assert_eq!(
-                sim.trigger_runtime.definitions.trigger_types[type_index].events[0].retained_house,
+                std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                    [type_index]
+                    .events[0]
+                    .retained_house,
                 Some(houses[1])
             );
             assert_eq!(sim.state_hash(), before);

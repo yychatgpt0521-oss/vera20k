@@ -40,7 +40,9 @@ fn wakeup_selection_and_deferred_mission_state_match_original_controls() {
         );
         // Supplied Tag links, not an original Tag construction comparison.
         // All identities deliberately share ONE TriggerType, as in native.
-        let tag_type = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let live: Vec<_> = (0..8)
             .map(|_| {
                 let tag = sim.construct_trigger_tag(tag_type);
@@ -435,7 +437,15 @@ fn retail_all02_prisoner_damage_enable_elapsed_wakeup_survives_restore() {
     for candidate in [&mut sim, &mut restored] {
         let before: Vec<_> = prisoners
             .iter()
-            .map(|&id| candidate.substrate.entities.get(id).unwrap().mission.clone())
+            .map(|&id| {
+                candidate
+                    .substrate
+                    .entities
+                    .get(id)
+                    .unwrap()
+                    .mission
+                    .clone()
+            })
             .collect();
         let rng = candidate.rng_state();
         poll(candidate);
@@ -476,7 +486,13 @@ fn retail_all02_prisoner_damage_enable_elapsed_wakeup_survives_restore() {
         candidate.session.set_binary_frame_for_test(1);
         for &id in &prisoners {
             candidate.mission_host_promote(id, 1, &rules);
-            let mission = candidate.substrate.entities.get(id).unwrap().mission.clone();
+            let mission = candidate
+                .substrate
+                .entities
+                .get(id)
+                .unwrap()
+                .mission
+                .clone();
             assert_eq!(mission.current().known(), Some(MissionType::Guard));
             assert_eq!(mission.queued(), crate::sim::mission::MissionId::NONE);
         }

@@ -412,7 +412,9 @@ fn restore130_after_owner_transfer_matches_native_blocked_and_cleared_cells() {
         Simulation::retain_initial_house_technos(&sim.substrate, &mut sim.houses);
         assert_eq!(initial_techno_state(&sim, &[id]), case["captured"]);
 
-        let tag_type = sim.trigger_runtime.definitions.tag_type("OWNER").unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("OWNER")
+            .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let action = sim
@@ -445,7 +447,9 @@ fn restore130_after_owner_transfer_matches_native_blocked_and_cleared_cells() {
         assert_eq!(case["clear_rng_unchanged"], true);
         assert_eq!(initial_techno_state(&sim, &[id]), case["before_restore"]);
 
-        let tag_type = sim.trigger_runtime.definitions.tag_type("RESTORE").unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("RESTORE")
+            .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let action = sim

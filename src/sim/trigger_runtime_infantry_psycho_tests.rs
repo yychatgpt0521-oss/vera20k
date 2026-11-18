@@ -165,9 +165,7 @@ fn go_berzerk_admission_uses_live_trigger_identity_and_the_infantry_array() {
                 }),
             );
         }
-        let control = sim
-            .trigger_runtime
-            .definitions
+        let control = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
             .tag_type("CONTROLTAG")
             .unwrap();
         let tag = sim.shared_trigger_tag(control);
@@ -317,9 +315,7 @@ fn psycho_stops_the_cell_on_an_ally_while_hunt_still_sees_the_enemy_behind_it() 
     };
     assert_eq!(scan(&sim, ScanMission::Guard), Some(enemy));
     sim.attach_object_trigger_tag(actor, Some("CONTROLTAG"));
-    let typ = sim
-        .trigger_runtime
-        .definitions
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("CONTROLTAG")
         .unwrap();
     let tag = sim.shared_trigger_tag(typ);

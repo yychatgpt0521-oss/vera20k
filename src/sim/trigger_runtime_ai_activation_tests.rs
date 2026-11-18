@@ -653,23 +653,20 @@ fn retail_all05_elapsed_stop_keeps_explicit_teams_and_saved_activation() {
         })
         .collect();
     assert_eq!(targets.len(), 2);
-    let stop_type = sim
-        .trigger_runtime
-        .definitions
+    let stop_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("092A6E8C")
         .unwrap();
     let stop_tag = sim.shared_trigger_tag(stop_type);
     let stop_live = sim.trigger_runtime.tag(stop_tag).unwrap().triggers[0];
     let stop_definition = sim.trigger_runtime.trigger(stop_live).unwrap().type_index;
     assert_eq!(
-        sim.trigger_runtime.definitions.trigger_types[stop_definition]
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [stop_definition]
             .actions
             .len(),
         5
     );
-    let begin_type = sim
-        .trigger_runtime
-        .definitions
+    let begin_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("077A6CAC")
         .unwrap();
     let begin_tag = sim.shared_trigger_tag(begin_type);

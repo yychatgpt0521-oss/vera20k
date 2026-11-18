@@ -368,7 +368,9 @@ fn damage_event_predicates_match_original_discrete_controls() {
                 case["raw"].as_str().unwrap()
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
@@ -388,8 +390,10 @@ fn damage_event_predicates_match_original_discrete_controls() {
         );
         // Represent the supplied native sentinel by a distinct retained Rust
         // identity. Neither representation may be replaced by actor/House.
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         sim.trigger_runtime.triggers[live].as_mut().unwrap().timer = timer(&case["timer_before"]);
         install_rng_boundary(&mut sim, &corpus["predicate_rng"]["full_seed31"]);
         let mut persistence = integer(&case["initial_persistence"]) != 0;
@@ -426,7 +430,10 @@ fn damage_event_predicates_match_original_discrete_controls() {
         );
         assert_eq!(case["event54"], case["event54_before"], "{name}");
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2]),
             "{name}: retained House"
         );
@@ -457,7 +464,9 @@ fn damage_event_single_register_history_matches_original() {
         "[Triggers]\nDAMAGE=Country0,<none>,Damage,0,1,1,1,0\n\
          [Tags]\nTAG=2,Damage,DAMAGE\n[Events]\nDAMAGE=1,38,0,0\n",
     );
-    let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type("TAG")
+        .unwrap();
     let tag = sim.shared_trigger_tag(typ);
     let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
     let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
@@ -477,7 +486,9 @@ fn damage_event_single_register_history_matches_original() {
         assert_eq!(row["prior"]["event_house"], 0);
         assert!(before.retained_house.is_none());
         assert!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0]
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
                 .retained_house
                 .is_none()
         );
@@ -501,7 +512,9 @@ fn damage_event_single_register_history_matches_original() {
         assert!(after.retained_house.is_none(), "{name}: live House");
         assert_eq!(row["event_house"], 0);
         assert!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0]
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
                 .retained_house
                 .is_none(),
             "{name}: shared event House"

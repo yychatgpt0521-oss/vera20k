@@ -394,6 +394,24 @@ fn naval_land_events_poll_final_tracking_removal_from_the_master_house_rung() {
     );
 }
 
+/// The simulation host's presentation copy of the world, taken every lent
+/// tick, shares the trigger definitions rather than cloning every TriggerType.
+#[test]
+fn a_presentation_copy_shares_the_trigger_definitions() {
+    let (mut sim, _, _, _) = event_ingress_fixture();
+    let map = trigger_fixture_map(
+        "[Triggers]\nTEXT=Country0,<none>,Text,0,1,1,1,0\n\
+         [Events]\nTEXT=1,8,0,0\n\
+         [Actions]\nTEXT=1,11,4,SOME_TEXT,0,0,0,0,A\n",
+    );
+    sim.initialize_trigger_definitions(&map, &Default::default(), None, None, None);
+    let copy = sim.presentation_copy(None, None);
+    assert!(std::sync::Arc::ptr_eq(
+        &sim.trigger_runtime.definitions,
+        &copy.trigger_runtime.definitions
+    ));
+}
+
 #[test]
 fn music_action_reaches_the_ordered_presentation_effects() {
     let (mut sim, rules, overlay, _) = event_ingress_fixture();
@@ -409,9 +427,7 @@ fn music_action_reaches_the_ordered_presentation_effects() {
     );
     sim.initialize_trigger_definitions(&map, &Default::default(), None, None, Some(&themes));
     sim.classify_map_triggers(&rules);
-    let source = sim
-        .trigger_runtime
-        .definitions
+    let source = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("MUSIC")
         .unwrap();
     let actions = sim.trigger_runtime.definitions.trigger_types[source]
@@ -452,9 +468,7 @@ fn retail_sov01_closeout_queues_matching_triggers_without_detaching_them() {
     for tag in 0..sim.trigger_runtime.definitions.tag_types.len() {
         sim.construct_trigger_tag(tag);
     }
-    let source = sim
-        .trigger_runtime
-        .definitions
+    let source = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("07FA53DC")
         .unwrap();
     let actions = sim.trigger_runtime.definitions.trigger_types[source]
@@ -477,7 +491,9 @@ fn retail_sov01_closeout_queues_matching_triggers_without_detaching_them() {
         "0B603E5C", "0B60744C", "06A25F3C", "09FF490C", "082C467C", "082C44AC", "0DD0203C",
         "082C3CEC", "082C79BC", "082C77EC",
     ] {
-        let target = sim.trigger_runtime.definitions.trigger_type(name).unwrap();
+        let target = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .trigger_type(name)
+            .unwrap();
         let matching: Vec<_> = sim
             .trigger_runtime
             .triggers
@@ -533,9 +549,13 @@ fn delete_tag_returns_safely_through_its_active_dispatcher() {
                      NESTED=1,70,3,ACTIVE,0,0,0,0,A\n"
                 ),
             );
-            let active_type = sim.trigger_runtime.definitions.tag_type("ACTIVE").unwrap();
+            let active_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+                .tag_type("ACTIVE")
+                .unwrap();
             let active = sim.shared_trigger_tag(active_type);
-            let other_type = sim.trigger_runtime.definitions.tag_type("OTHER").unwrap();
+            let other_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+                .tag_type("OTHER")
+                .unwrap();
             let other = sim.shared_trigger_tag(other_type);
             let cell = Simulation::trigger_cell_identity(&sim.resolved_terrain, (15, 15));
             sim.trigger_runtime
@@ -575,9 +595,7 @@ fn retail_sov01_boris_tag_delete_is_immediate_and_releases_attachments() {
     let Some((mut sim, rules, overlay, _)) = retail_sov01_script_context() else {
         return;
     };
-    let source = sim
-        .trigger_runtime
-        .definitions
+    let source = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("097651DC")
         .unwrap();
     let action = sim.trigger_runtime.definitions.trigger_types[source]
@@ -591,9 +609,7 @@ fn retail_sov01_boris_tag_delete_is_immediate_and_releases_attachments() {
     };
     let first = sim.construct_trigger_tag(target);
     let second = sim.construct_trigger_tag(target);
-    let unrelated_type = sim
-        .trigger_runtime
-        .definitions
+    let unrelated_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("0C47FB1C")
         .unwrap();
     let unrelated = sim.construct_trigger_tag(unrelated_type);
@@ -661,9 +677,7 @@ fn retail_sov01_make_enemy_reaches_the_shared_diplomacy_owner() {
         crate::sim::house_diplomacy::HouseAllianceAdmission::Admitted(graph),
         &rules,
     );
-    let source = sim
-        .trigger_runtime
-        .definitions
+    let source = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("0C331D8C")
         .unwrap();
     let tag = sim
@@ -707,9 +721,7 @@ fn retail_sov01_transport_hint_emits_the_named_cameo_on_the_native_clock() {
     let Some((mut sim, rules, overlay, _)) = retail_sov01_script_context() else {
         return;
     };
-    let source = sim
-        .trigger_runtime
-        .definitions
+    let source = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("097DB5BC")
         .unwrap();
     let actions = sim.trigger_runtime.definitions.trigger_types[source]
@@ -1081,7 +1093,9 @@ fn all_change_house_dispatch_matches_original_selector_controls() {
                 row["read"]["raw"].as_str().unwrap(),
             ),
         );
-        let tag_type = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         sim.trigger_runtime.triggers[live]
@@ -2024,9 +2038,7 @@ fn unit_record_kill_releases_retail_sov01_landing_when_the_last_target_is_a_ship
     targets.sort_by_key(|entity| entity.category != EntityCategory::Structure);
     assert_eq!(sim.spawn_from_map(&targets, Some(&rules)), 7);
     sim.classify_map_triggers(&rules);
-    let tag_type = sim
-        .trigger_runtime
-        .definitions
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("0B75455C")
         .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);
@@ -2739,9 +2751,7 @@ fn create_building_type10_reaches_placement_and_house_publication() {
         .unwrap()
         .entries()[0]
         .clone();
-    let action = sim
-        .trigger_runtime
-        .definitions
+    let action = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .resolve_action(entry, None, None, None);
     assert!(sim.apply_live_trigger_action(
         &action,
@@ -2843,8 +2853,9 @@ fn destroyed_house_predicates_match_original_independent_signed_counters() {
         sim.classify_map_triggers(&rules);
         let live = sim.trigger_runtime.trigger_order[0];
         let type_index = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[type_index].events[0].retained_house =
-            Some(houses[1]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[type_index]
+            .events[0]
+            .retained_house = Some(houses[1]);
         let timer_before = sim.trigger_runtime.trigger(live).unwrap().timer;
         let mut persistence = false;
         sim.session.set_binary_frame_for_test(123);
@@ -2879,7 +2890,10 @@ fn destroyed_house_predicates_match_original_independent_signed_counters() {
             timer_before
         );
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[type_index].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [type_index]
+                .events[0]
+                .retained_house,
             Some(houses[1]),
             "9/11 do not replace Event+54: {case}"
         );
@@ -2935,7 +2949,7 @@ fn damage_at_waypoint_reaches_the_shared_building_receiver() {
         .entries()[0]
         .clone();
     let action = definitions.resolve_action(entry, None, None, None);
-    sim.trigger_runtime.definitions = definitions;
+    sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
     assert!(sim.apply_live_trigger_action(
         &action,
         sim.trigger_action_context(typ, None, TagEventInput::default(), &rules),

@@ -292,7 +292,9 @@ fn engineer_capture_uses_live_owner_after_both_entered_callbacks() {
 }
 
 fn tag(sim: &mut Simulation, name: &str) -> (usize, usize) {
-    let typ = sim.trigger_runtime.definitions.tag_type(name).unwrap();
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type(name)
+        .unwrap();
     let tag = sim.shared_trigger_tag(typ);
     (tag, sim.trigger_runtime.tag(tag).unwrap().triggers[0])
 }
@@ -496,8 +498,9 @@ fn twelve_original_team_predicates_keep_type_head_leaving_house_and_persistence_
             team(&mut sim, &rules, houses[0], name, head, leaving);
         }
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events
+            [0]
+        .retained_house = Some(houses[2]);
         let before = rng(&sim);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let mut call = |sim: &mut Simulation| {
@@ -522,7 +525,9 @@ fn twelve_original_team_predicates_keep_type_head_leaving_house_and_persistence_
         assert_eq!(persistence, after);
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ]
+                .events[0]
+                .retained_house,
             Some(houses[2])
         );
         assert_eq!(rng(&sim), before);

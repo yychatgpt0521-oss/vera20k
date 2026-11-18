@@ -77,12 +77,16 @@ fn build_type_events_match_native_house_selection_persistence_and_rng() {
                 integer(&case["value"])
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         supply_rng(&mut sim, &native["predicate_rng"]["full_seed31"]);
         let mut persistence = integer(&case["initial_persistence"]) != 0;
@@ -110,7 +114,10 @@ fn build_type_events_match_native_house_selection_persistence_and_rng() {
         assert_eq!(case["timer_after"], case["timer_before"]);
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2])
         );
         assert_rng(&sim, &native["predicate_rng"]["full_after"]);
@@ -188,15 +195,19 @@ fn build_type_event_latches_before_elapsed_time_as_in_native_register_history() 
         "[Triggers]\nBUILT=Country0,<none>,Built,0,1,1,1,0\n\
          [Events]\nBUILT=2,13,0,10,19,0,7\n[Tags]\nTAG=0,Built,BUILT\n",
     );
-    let tag_type = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type("TAG")
+        .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);
     let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
     let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
     assert_eq!(
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0].kind,
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events[0]
+            .kind,
         19
     );
-    sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house = Some(houses[0]);
+    std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events[0]
+        .retained_house = Some(houses[0]);
     sim.trigger_runtime.triggers[live]
         .as_mut()
         .unwrap()
@@ -389,7 +400,9 @@ fn build_type_retail_all07_placement_reaches_house_poll_and_eva_once() {
     // Bind the original EVA operand through the ordinary definition reader.
     sim.initialize_trigger_definitions(&excerpt, &Default::default(), Some(&eva), None, None);
     sim.classify_map_triggers(&rules);
-    let tag_type = sim.trigger_runtime.definitions.tag_type(tag_id).unwrap();
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type(tag_id)
+        .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);
     let previous = sim.houses[&house].last_built_type_index(ObjectCategory::Building);
     assert_ne!(previous, expected_index);

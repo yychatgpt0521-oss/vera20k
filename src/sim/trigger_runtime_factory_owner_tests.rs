@@ -338,7 +338,9 @@ fn transfer(sim: &mut Simulation, rules: &RuleSet, owner: InternedId, target: In
             "[Triggers]\nSHIFT=Americans,<none>,Shift,0,1,1,1,0\n[Tags]\nTAG=2,Shift,SHIFT\n[Events]\nSHIFT=1,27,0,7\n[Actions]\nSHIFT=1,36,0,{selector},0,0,0,0,A\n"
         ),
     );
-    let tag_type = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type("TAG")
+        .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);
     let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
     let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
