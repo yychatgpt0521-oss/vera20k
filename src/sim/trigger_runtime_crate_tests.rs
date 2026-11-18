@@ -199,9 +199,7 @@ fn authored_placement_matches_eight_original_controls_and_all_rng_streams() {
                 case["native_read"]["raw"].as_str().unwrap()
             ),
         );
-        let typ = sim
-            .trigger_runtime
-            .definitions
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
             .trigger_type("CREATE")
             .unwrap();
         let action = sim.trigger_runtime.definitions.trigger_types[typ].actions[0].clone();
@@ -500,12 +498,15 @@ fn crate_predicates_match_all_original_controls_and_registration_classes() {
                 case["raw"].as_str().unwrap()
             ),
         );
-        let tag_type = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events
+            [0]
+        .retained_house = Some(houses[2]);
         sim.trigger_runtime.triggers[live].as_mut().unwrap().timer = CdTimer::from_raw(
             integer(&case["timer_before"][0]),
             integer(&case["timer_before"][2]),
@@ -546,7 +547,9 @@ fn crate_predicates_match_all_original_controls_and_registration_classes() {
         assert_eq!(case["timer_after"][1], 0);
         assert_eq!(case["event54"], case["event54_before"]);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ]
+                .events[0]
+                .retained_house,
             Some(houses[2])
         );
         assert_rng(
@@ -708,9 +711,7 @@ fn retail_all07_elapsed_crates_and_money_survive_save_and_notify_logic() {
         ));
     }
     let map = install(&mut sim, &rules, &body);
-    let observer_type = sim
-        .trigger_runtime
-        .definitions
+    let observer_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("PICKED")
         .unwrap();
     let observer = &sim.trigger_runtime.definitions.trigger_types[observer_type];
@@ -719,9 +720,7 @@ fn retail_all07_elapsed_crates_and_money_survive_save_and_notify_logic() {
     assert_eq!(observer.actions.len(), 1);
     assert_eq!(observer.actions[0].entry.kind, 28);
     assert_eq!(observer.actions[0].value, Some(7));
-    let observer_tag_type = sim
-        .trigger_runtime
-        .definitions
+    let observer_tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("PICKEDTAG")
         .unwrap();
     assert!(sim.trigger_runtime.logic_tags.iter().any(|&tag| {
@@ -729,7 +728,9 @@ fn retail_all07_elapsed_crates_and_money_survive_save_and_notify_logic() {
             .tag(tag)
             .is_some_and(|live| live.type_index == observer_tag_type)
     }));
-    let typ = sim.trigger_runtime.definitions.trigger_type(id).unwrap();
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .trigger_type(id)
+        .unwrap();
     let definition = &sim.trigger_runtime.definitions.trigger_types[typ];
     assert_eq!(
         definition.events[0].kind,

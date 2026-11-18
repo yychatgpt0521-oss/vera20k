@@ -33,7 +33,9 @@ fn install(sim: &mut Simulation, rules: &RuleSet, event_record: &str) -> usize {
          [Tags]\nSPYTAG=0,Spy,SPY\n[CellTags]\n15015=SPYTAG\n"
         ),
     );
-    let typ = sim.trigger_runtime.definitions.tag_type("SPYTAG").unwrap();
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type("SPYTAG")
+        .unwrap();
     let tag = sim.shared_trigger_tag(typ);
     sim.trigger_runtime.tag(tag).unwrap().triggers[0]
 }
@@ -95,8 +97,9 @@ fn spy_house_event_reads_forced_display_owner_and_first_country_house() {
             .unwrap();
         let live = install(&mut sim, &rules, row["raw"].as_str().unwrap());
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events
+            [0]
+        .retained_house = Some(houses[2]);
         let event = sim.trigger_runtime.definitions.trigger_types[typ].events[0].clone();
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let disguise = sim
@@ -149,7 +152,8 @@ fn spy_house_event_reads_forced_display_owner_and_first_country_house() {
             row["name"]
         );
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[typ].events[0],
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ]
+                .events[0],
             event
         );
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
@@ -595,9 +599,10 @@ fn spy_type_event_uses_forced_identity_side_fallback_and_native_persistence_gate
             live
         ));
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0]
-            .condition
-            .value = -1;
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events
+            [0]
+        .condition
+        .value = -1;
         assert!(!sim.has_occurred(
             0,
             TagEventInput {

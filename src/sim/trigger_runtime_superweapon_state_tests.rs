@@ -181,7 +181,9 @@ fn all03_authored_nuke_order_preserves_current_timer_and_recharges_at_override()
         let power = sim.power_states.house_mut(owner);
         power.set_total_drain_for_test(0);
         power.set_is_low_power_for_test(false);
-        let tag_type = sim.trigger_runtime.definitions.tag_type(tag_name).unwrap();
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type(tag_name)
+            .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
@@ -246,8 +248,10 @@ fn all03_authored_nuke_order_preserves_current_timer_and_recharges_at_override()
                         .set_enemy_house_for_test(Some(enemy));
                 }
                 _ if stage.starts_with("execute") => {
-                    let action =
-                        sim.trigger_runtime.definitions.trigger_types[typ].actions[ordinal].clone();
+                    let action = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+                        .trigger_types[typ]
+                        .actions[ordinal]
+                        .clone();
                     let parsed = crate::map::actions::parse_actions(
                         &crate::rules::ini_parser::IniFile::from_str(&format!(
                             "[Actions]\nROW=1,{}\n",

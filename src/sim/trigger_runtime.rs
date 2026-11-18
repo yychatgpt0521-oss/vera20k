@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crate::map::actions::{ActionDefinitionReference, ActionEntry, DefinitionSelector};
 use crate::map::cell_index::NativeCellIdentity;
@@ -766,11 +767,36 @@ enum TagAttachment {
     Team(u64),
 }
 
+/// Serde for [`TriggerRuntime::definitions`]: the record's own form.
+mod shared_definitions {
+    use super::RuntimeDefinitions;
+    use std::sync::Arc;
+
+    pub(super) fn serialize<S: serde::Serializer>(
+        definitions: &Arc<RuntimeDefinitions>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&**definitions, serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Arc<RuntimeDefinitions>, D::Error> {
+        <RuntimeDefinitions as serde::Deserialize>::deserialize(deserializer).map(Arc::new)
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TriggerRuntime {
     globals_set: BTreeSet<u32>,
     locals_set: BTreeSet<u32>,
-    definitions: RuntimeDefinitions,
+    /// Built when the scenario installs. The few writes after (an event's
+    /// retained House, an allocating Tag lookup) go through `Arc::make_mut`,
+    /// so a copy of the world (the simulation host's presentation copy, every
+    /// lent tick) shares the definitions instead of cloning every TriggerType
+    /// (VERA-only; the same state).
+    #[serde(with = "shared_definitions")]
+    definitions: Arc<RuntimeDefinitions>,
     tags: Vec<Option<LiveTag>>,
     triggers: Vec<Option<LiveTrigger>>,
     /// Native registry order survives storage holes and stable-removal.
@@ -1522,7 +1548,9 @@ impl Simulation {
         // replay those reads or replace that tail during AI installation.
         let staged = (!self.trigger_runtime.definitions_prepared)
             .then(|| RuntimeDefinitions::read_teams(registry));
-        let definitions = staged.as_ref().unwrap_or(&self.trigger_runtime.definitions);
+        let definitions = staged
+            .as_ref()
+            .unwrap_or(&*self.trigger_runtime.definitions);
         let (vm, diagnostics) =
             crate::sim::team_script_vm::TeamScriptVm::from_prepared_ini_registry(
                 registry,
@@ -1531,7 +1559,7 @@ impl Simulation {
                 rules,
             );
         if let Some(definitions) = staged {
-            self.trigger_runtime.definitions = definitions;
+            self.trigger_runtime.definitions = Arc::new(definitions);
         }
         self.team_script_vm = vm;
         for diagnostic in &diagnostics {
@@ -1592,7 +1620,7 @@ impl Simulation {
             }
         }
         self.trigger_runtime = TriggerRuntime {
-            definitions,
+            definitions: Arc::new(definitions),
             definitions_prepared: true,
             locals_set,
             ..TriggerRuntime::default()
@@ -1737,7 +1765,10 @@ impl Simulation {
                 continue;
             };
             //4AD20C resolves the allocating TagType factory before admission.
-            let Some(type_index) = self.trigger_runtime.definitions.tag_type(name) else {
+            // The factory can allocate: a write to the shared definitions.
+            let Some(type_index) =
+                Arc::make_mut(&mut self.trigger_runtime.definitions).tag_type(name)
+            else {
                 continue;
             };
             let packed = crt_atoi(key);
@@ -2247,7 +2278,10 @@ impl Simulation {
                 if condition.value != -1 && selected_house != Some(owner) {
                     return false;
                 }
-                self.trigger_runtime.definitions.trigger_types[type_index].events[ordinal]
+                // Runtime state in the shared definitions: written through
+                // its own copy while a presentation copy shares the old one.
+                Arc::make_mut(&mut self.trigger_runtime.definitions).trigger_types[type_index]
+                    .events[ordinal]
                     .retained_house = Some(owner);
                 *persistence = true;
                 true
@@ -3423,7 +3457,8 @@ impl Simulation {
         rules: &crate::rules::ruleset::RuleSet,
         trigger_id: &str,
     ) -> Option<usize> {
-        let source = self.trigger_runtime.definitions.trigger_type(trigger_id)?;
+        let source =
+            Arc::make_mut(&mut self.trigger_runtime.definitions).trigger_type(trigger_id)?;
         let actions: Vec<_> = self.trigger_runtime.definitions.trigger_types[source]
             .actions
             .iter()

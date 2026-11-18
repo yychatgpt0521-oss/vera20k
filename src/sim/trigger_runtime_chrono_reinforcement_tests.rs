@@ -257,8 +257,7 @@ fn chrono_reinforcement_reader_dispatch_placement_and_process_match_original() {
     sim.main_rng = SimRng::from_native_state_hex_for_test(first_stream("main")).into();
     sim.mapgen_rng = SimRng::from_native_state_hex_for_test(first_stream("mapgen"));
     for input in &definitions {
-        sim.trigger_runtime
-            .definitions
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
             .team_type(input["name"].as_str().unwrap());
     }
     for row in rows {
@@ -333,9 +332,7 @@ fn chrono_reinforcement_reader_dispatch_placement_and_process_match_original() {
             entry.waypoint_index.map(|value| value as i32).unwrap_or(-1),
             number(&row["read"]["waypoint"])
         );
-        let mut action = sim
-            .trigger_runtime
-            .definitions
+        let mut action = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
             .resolve_action(entry, None, None, None);
         if let Some(waypoint) = input["waypoint_override"].as_i64() {
             action.entry.waypoint_index = Some(waypoint as u32);

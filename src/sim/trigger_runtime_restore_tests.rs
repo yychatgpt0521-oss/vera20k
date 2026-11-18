@@ -26,9 +26,7 @@ fn install(sim: &mut Simulation, rules: &RuleSet, value: i32) -> usize {
              [Tags]\nRESTORETAG=0,Restore,RESTORE\n"
         ),
     );
-    let tag_type = sim
-        .trigger_runtime
-        .definitions
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("RESTORETAG")
         .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);

@@ -401,9 +401,7 @@ fn all06_elapsed_enable_chain(with_enemy: bool) {
     // Execute the actual Wave4 predecessor's final Enable action, supplying
     // only that already-arrived-wave precondition, excluding its other arms.
     let entry = map.actions["095EB2AC"].entries().last().unwrap().clone();
-    let action = sim
-        .trigger_runtime
-        .definitions
+    let action = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .resolve_action(entry, None, None, None);
     assert!(sim.apply_live_trigger_action(
         &action,

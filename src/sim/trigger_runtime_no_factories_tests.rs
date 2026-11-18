@@ -174,8 +174,9 @@ fn no_factories_event_matches_original_incoming_house_list_and_raw_class() {
         );
         let live = sim.trigger_runtime.trigger_order[0];
         let typ = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ].events
+            [0]
+        .retained_house = Some(houses[2]);
         let timer = CdTimer::from_raw(int(&case["timer_before"][0]), int(&case["timer_before"][2]));
         sim.trigger_runtime.triggers[live].as_mut().unwrap().timer = timer;
         let actor = case["actor_owner"].as_u64().map(|slot| {
@@ -227,7 +228,9 @@ fn no_factories_event_matches_original_incoming_house_list_and_raw_class() {
         assert_eq!(persistence, int(&case["persistence"]) != 0, "{case}");
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[typ].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[typ]
+                .events[0]
+                .retained_house,
             Some(houses[2])
         );
         assert_rng_state(&sim, &native["rng_after"]);
@@ -430,9 +433,7 @@ fn no_factories_retail_sov02_delay_reaches_existing_sale_and_hunt_after_restore(
     let foot = sim
         .spawn_object_at_height("E1", house_name, 20, 20, 0, 0, &rules)
         .unwrap();
-    let delayed_type = sim
-        .trigger_runtime
-        .definitions
+    let delayed_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .trigger_type("043A9BBC")
         .unwrap();
     let delayed = *sim

@@ -94,12 +94,16 @@ fn loss_threshold_events_match_original_incoming_house_and_signed_counters() {
                 integer(&case["value"])
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let rng_before = (
             sim.scenario_rng.logical_state(),
@@ -132,7 +136,10 @@ fn loss_threshold_events_match_original_incoming_house_and_signed_counters() {
         assert_eq!(persistence, integer(&case["persistence"]) != 0, "{case}");
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2]),
             "loss conditions must not replace the retained House: {case}"
         );
@@ -208,9 +215,7 @@ fn loss_threshold_events_bind_retail_all04_reinforcement_operands() {
                 .read_string(trigger_id, "", 512),
             route["raw_event"]
         );
-        let tag_type = sim
-            .trigger_runtime
-            .definitions
+        let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
             .tag_type(route["tag_id"].as_str().unwrap())
             .unwrap();
         let tag = sim.shared_trigger_tag(tag_type);
@@ -332,12 +337,16 @@ fn naval_land_events_match_original_signed_tracking_and_country_selection() {
                 integer(&case["value"]),
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let rng_before = (
             sim.scenario_rng.logical_state(),
@@ -372,7 +381,10 @@ fn naval_land_events_match_original_signed_tracking_and_country_selection() {
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(integer(&case["event54"]) as u32, 0xABCD1234);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2]),
             "55/56 leave Event+54 unchanged: {case}"
         );
@@ -525,7 +537,9 @@ fn naval_event_retail_all05_removal_enables_black_eagle_support_once() {
     let cue = eva.index_of("Mis_xA5_EvaBlackEagles").unwrap();
     sim.initialize_trigger_definitions(&excerpt, &Default::default(), Some(&eva), None, None);
     sim.classify_map_triggers(&rules);
-    let tag_type = sim.trigger_runtime.definitions.tag_type(tag_id).unwrap();
+    let tag_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+        .tag_type(tag_id)
+        .unwrap();
     let tag = sim.shared_trigger_tag(tag_type);
     let enabled = |sim: &Simulation, id: &str| {
         let typ = sim
@@ -627,12 +641,16 @@ fn funds_events_match_original_signed_wallet_predicates() {
                 integer(&case["threshold"])
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let rng_before = (
             sim.scenario_rng.logical_state(),
@@ -663,7 +681,10 @@ fn funds_events_match_original_signed_wallet_predicates() {
         assert_eq!(persistence, integer(&case["persistence"]) != 0, "{case}");
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2]),
             "funds conditions must not replace the retained House: {case}"
         );
@@ -848,9 +869,7 @@ fn funds_event_sov06_retail_cash_taunt_reaches_named_eva_once() {
         70000
     );
     sim.initialize_trigger_definitions(&map, &Default::default(), Some(&eva), None, None);
-    let typ = sim
-        .trigger_runtime
-        .definitions
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("0D6BF7EC")
         .unwrap();
     let tag = sim.shared_trigger_tag(typ);
@@ -931,12 +950,16 @@ fn building_loss_event_matches_original_tracked_count_and_country_order() {
                 integer(&case["value"])
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[1]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[1]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let rng = (
             sim.scenario_rng.logical_state(),
@@ -969,7 +992,10 @@ fn building_loss_event_matches_original_tracked_count_and_country_order() {
         assert_eq!(persistence, integer(&case["persistence"]) != 0, "{case}");
         assert_eq!(sim.trigger_runtime.trigger(live).unwrap().timer, timer);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[1]),
             "{case}"
         );
@@ -1021,9 +1047,7 @@ fn building_loss_event_retail_all04_sets_the_rescue_route_local() {
     let owner = sim.house_by_country_index(CountryIdx(9), &rules).unwrap();
     assert_eq!(sim.interner.resolve(owner), "YuriCountry");
     sim.initialize_trigger_definitions(&map, &Default::default(), None, None, None);
-    let typ = sim
-        .trigger_runtime
-        .definitions
+    let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
         .tag_type("07C973FC")
         .unwrap();
     let tag = sim.shared_trigger_tag(typ);
@@ -1118,12 +1142,16 @@ fn damage_source_event44_matches_original_registered_house_index() {
                 case["raw"].as_str().unwrap()
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[2]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[2]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let mut persistence = false;
         let mut predicate = |sim: &mut Simulation| {
@@ -1152,7 +1180,10 @@ fn damage_source_event44_matches_original_registered_house_index() {
         assert_eq!(persistence, integer(&case["persistence"]) != 0, "{case}");
         assert_eq!(integer(&case["event54"]) as u32, 0xABCD1234, "{case}");
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(houses[2]),
             "original Event44 does not write its retained-House field: {case}"
         );
@@ -1293,12 +1324,16 @@ fn entered_cell_predicates_match_original_country_and_retained_house_identity() 
                 case["raw"].as_str().unwrap()
             ),
         );
-        let typ = sim.trigger_runtime.definitions.tag_type("TAG").unwrap();
+        let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("TAG")
+            .unwrap();
         let tag = sim.shared_trigger_tag(typ);
         let live = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
         let trigger_type = sim.trigger_runtime.trigger(live).unwrap().type_index;
-        sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house =
-            Some(houses[1]);
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+            [trigger_type]
+            .events[0]
+            .retained_house = Some(houses[1]);
         let timer = sim.trigger_runtime.trigger(live).unwrap().timer;
         let mut persistence = false;
         let mut predicate = |sim: &mut Simulation| {
@@ -1336,7 +1371,10 @@ fn entered_cell_predicates_match_original_country_and_retained_house_identity() 
         }
         let expected_retained = native_retained.map_or(houses[1], |index| houses[index]);
         assert_eq!(
-            sim.trigger_runtime.definitions.trigger_types[trigger_type].events[0].retained_house,
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types
+                [trigger_type]
+                .events[0]
+                .retained_house,
             Some(expected_retained),
             "{case}"
         );
@@ -1538,9 +1576,7 @@ fn fresh_line_marker_writer_and_arrival_consumers_match_original_sparse_cells() 
         }
         let tag_ids: Vec<_> = (0..case["input"]["definitions"].as_array().unwrap().len())
             .map(|ordinal| {
-                let typ = sim
-                    .trigger_runtime
-                    .definitions
+                let typ = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
                     .tag_type(&format!("TAG{ordinal}"))
                     .unwrap();
                 sim.shared_trigger_tag(typ)
@@ -1720,7 +1756,7 @@ fn all01_due_charge_and_damage_share_the_production_house_power_phase() {
     );
     // Preserve every actual list position. Shrinking the list would change
     // repeat0's synchronous removal/cursor advancement at indices72/107.
-    for typ in &mut sim.trigger_runtime.definitions.trigger_types {
+    for typ in &mut std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types {
         if !matches!(typ.id.as_str(), "0B7C0AEC" | "087857CC") {
             typ.enabled = false;
         }
@@ -2021,7 +2057,7 @@ fn native_all01_super_charge_dispatch_uses_retail_type_and_retained_operands() {
         assert_eq!(json!(entry.auxiliary_value()), row["read"]["auxiliary"]);
         let action = definitions.resolve_action(entry, None, None, None);
         assert_eq!(json!(action.value), row["read"]["value"]);
-        sim.trigger_runtime.definitions = definitions;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
         let rng_before = (
             sim.main_rng.native_state_hex(),
             sim.scenario_rng.native_state_hex(),
@@ -2131,7 +2167,7 @@ fn native_damage_at_waypoint_dispatch_matches_original_controls() {
             .clone();
         let action = definitions.resolve_action(entry, None, None, None);
         assert_eq!(json!(action.value), row["read"]["value"], "{name}: +90");
-        sim.trigger_runtime.definitions = definitions;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
         let before = (
             sim.main_rng.native_state_hex(),
             sim.scenario_rng.native_state_hex(),
@@ -2349,7 +2385,7 @@ fn native_all01_reactor_damage_uses_retail_rules_and_shared_power_owner() {
         .unwrap()
         .clone();
     let action = definitions.resolve_action(entry, None, None, None);
-    sim.trigger_runtime.definitions = definitions;
+    sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
     // Import the original post-constructor boundary. Damage crossing yellow
     // must retain the shared smoke owner's one Scenario selection draw.
     sim.native_unique_ids = Some(NativeUniqueIdCursor::test_at_current_value(integer(
@@ -2600,7 +2636,7 @@ fn native_trigger_reveal_action_matches_original_controls() {
             },
         );
         sim.session.install_waypoints(&waypoints);
-        sim.trigger_runtime.definitions = definitions;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
         sim.scenario_rng = SimRng::new(31);
         sim.main_rng = SimRng::new(31).into();
         sim.mapgen_rng = SimRng::new(31);
@@ -2939,7 +2975,7 @@ fn action_11_inline_labels_and_ordered_effects_match_original_controls() {
         let mut definitions = RuntimeDefinitions::default();
         let typ = definitions.trigger_type("LABEL").unwrap();
         let action = definitions.resolve_action(entry, None, None, None);
-        sim.trigger_runtime.definitions = definitions;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
         let preceding = TriggerEffect::InputLockChanged {
             locked: true,
             was_locked: false,
@@ -2985,7 +3021,7 @@ fn restored_live_owner_rejects_dangling_definitions_instances_and_attachments() 
         .unwrap()["input"];
     let ares = crate::rules::ruleset::RuleSet::empty_for_test().ares_form();
     let mut sim = Simulation::with_seed(31);
-    sim.trigger_runtime.definitions = supplied_definitions(input);
+    sim.trigger_runtime.definitions = std::sync::Arc::new(supplied_definitions(input));
     sim.trigger_runtime.definitions_prepared = true;
     sim.resolved_terrain = Some(crate::map::resolved_terrain::test_grid(
         64,
@@ -3023,14 +3059,20 @@ fn restored_live_owner_rejects_dangling_definitions_instances_and_attachments() 
     let owner = sim.trigger_runtime.clone();
     let corruptions: [(&str, fn(&mut Simulation)); 9] = [
         ("definition link", |sim| {
-            sim.trigger_runtime.definitions.trigger_types[0].linked = Some(usize::MAX)
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).trigger_types[0].linked =
+                Some(usize::MAX)
         }),
         ("team reference count", |sim| {
-            sim.trigger_runtime.definitions.team_tags.push(None)
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+                .team_tags
+                .push(None)
         }),
         ("team retained tag", |sim| {
-            let index = sim.trigger_runtime.definitions.team_type("TT").unwrap();
-            sim.trigger_runtime.definitions.team_tags[index] = Some(usize::MAX);
+            let index = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+                .team_type("TT")
+                .unwrap();
+            std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).team_tags[index] =
+                Some(usize::MAX);
         }),
         ("live type", |sim| {
             sim.trigger_runtime.tags[0].as_mut().unwrap().type_index = usize::MAX
@@ -3151,7 +3193,7 @@ fn physical_team_tag_references_match_original_retention_and_long_id_controls() 
             // constructor must allocate a fresh live Tag from that ordinal,
             // without resolving the raw name again or consuming an RNG draw.
             let mut sim = Simulation::new();
-            sim.trigger_runtime.definitions = definitions;
+            sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
             let typ = sim.interner.intern("TT");
             let before = sim.trigger_runtime.definitions.clone();
             let (_, draws) = crate::sim::rng::trace_draws(|| sim.attach_team_trigger_tag(7, typ));
@@ -3240,10 +3282,15 @@ fn team_member_tag_admission_and_removal_match_original_controls() {
         ));
         let registry = TeamAiIniRegistry::from_sources(&definitions, &IniFile::from_str(""), false);
         sim.install_team_ai_registry(&registry, &rules);
-        let author_type = sim.trigger_runtime.definitions.tag_type("author").unwrap();
-        let team_type = sim.trigger_runtime.definitions.tag_type("team").unwrap();
-        sim.trigger_runtime.definitions.team_types = vec!["TT".into()];
-        sim.trigger_runtime.definitions.team_tags = vec![
+        let author_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("author")
+            .unwrap();
+        let team_type = std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions)
+            .tag_type("team")
+            .unwrap();
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).team_types =
+            vec!["TT".into()];
+        std::sync::Arc::make_mut(&mut sim.trigger_runtime.definitions).team_tags = vec![
             input["nonnull_team_tag"]
                 .as_bool()
                 .unwrap()
@@ -4082,7 +4129,7 @@ pub(super) fn replay_native_histories(rows: impl Iterator<Item = Value>) -> usiz
         ));
         sim.session
             .set_binary_frame_for_test(input["frame"].as_u64().unwrap_or(123) as u32);
-        sim.trigger_runtime.definitions = supplied_definitions(input);
+        sim.trigger_runtime.definitions = std::sync::Arc::new(supplied_definitions(input));
         sim.trigger_runtime.fixture_difficulty = Some(input.get("difficulty").map_or(1, integer));
         sim.trigger_runtime.logic_cursor = input.get("logic_cursor").map_or(0, integer);
         sim.trigger_runtime.map_cursor = input.get("map_cursor").map_or(0, integer);

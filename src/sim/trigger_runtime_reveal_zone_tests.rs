@@ -184,7 +184,7 @@ fn native_reveal_zone_dispatch_uses_literal_waypoint_raw_zone_and_radius_two() {
             },
         );
         sim.session.install_waypoints(&waypoints);
-        sim.trigger_runtime.definitions = definitions;
+        sim.trigger_runtime.definitions = std::sync::Arc::new(definitions);
         // Radius0 deliberately differs from18's native literal2; only17
         // consumes this key. Positive source heights exercise both shifts.
         let rules = RuleSet::from_ini(&IniFile::from_str(
