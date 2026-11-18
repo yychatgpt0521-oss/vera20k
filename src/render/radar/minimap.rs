@@ -422,7 +422,7 @@ impl MinimapRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        frame: &impl crate::render::snapshot::SnapshotObjects,
+        frame: &(impl crate::render::snapshot::SnapshotObjects + Sync),
         logic_order: &[u64],
         houses: &crate::sim::houses::Houses,
         house_colors: &HouseColorMap,
@@ -533,24 +533,37 @@ impl MinimapRenderer {
                 }
             }
         }
-        for &stable_id in logic_order {
-            let Some(entity) = frame.object(stable_id) else {
-                continue;
-            };
-            let update = build_radar_object_update(
-                entity,
-                houses,
-                local_owner,
-                fog,
-                alliances,
-                full_visibility,
-                game_mode_nonzero,
-                rules,
-                interner,
-                projection,
-                self.playfield_bounds,
-                cells.as_ref(),
-            );
+        // Each object's update reads only that object and the shared view, so
+        // the updates are built on the worker pool, each worker stamping its
+        // own isolated fallback Cell, and applied in logic order.
+        let playfield_bounds = self.playfield_bounds;
+        let updates = crate::sim::parallel::map_with(
+            logic_order,
+            WorkerCells(None),
+            |worker_cells: &mut WorkerCells<'_>, &stable_id| {
+                let entity = frame.object(stable_id)?;
+                let cells = resolved_terrain.map(|terrain| {
+                    &*worker_cells.0.get_or_insert_with(|| {
+                        crate::map::resolved_terrain::NativeCellQuery::isolated(terrain)
+                    })
+                });
+                Some(build_radar_object_update(
+                    entity,
+                    houses,
+                    local_owner,
+                    fog,
+                    alliances,
+                    full_visibility,
+                    game_mode_nonzero,
+                    rules,
+                    interner,
+                    projection,
+                    playfield_bounds,
+                    cells,
+                ))
+            },
+        );
+        for update in updates.into_iter().flatten() {
             if let Some(event) = self.radar_tracker.update_object(update, false) {
                 self.create_enemy_sensed_event(event, sim_tick, rules);
             }
@@ -964,6 +977,16 @@ fn create_white_texture(
 #[cfg(all(test, tests_render_a_r))]
 #[path = "minimap_tests.rs"]
 mod tests;
+
+/// A radar pass worker's own isolated query (`NativeCellQuery::isolated`): a
+/// clone starts empty, so no two workers stamp one fallback Cell.
+struct WorkerCells<'a>(Option<crate::map::resolved_terrain::NativeCellQuery<'a>>);
+
+impl Clone for WorkerCells<'_> {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
 
 #[cfg(all(test, tests_render_a_r))]
 #[path = "minimap_gpu_tests.rs"]

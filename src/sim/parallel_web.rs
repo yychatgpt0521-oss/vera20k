@@ -12,7 +12,7 @@ pub(crate) fn map_in_order<T: Sync, R: Send>(
         .map(|(index, item)| work(index, item))
         .collect()
 }
-pub(crate) fn map_with<T: Sync, S: Clone + Send, R: Send>(
+pub fn map_with<T: Sync, S: Clone + Send, R: Send>(
     items: &[T],
     mut init: S,
     work: impl Fn(&mut S, &T) -> R + Sync,
