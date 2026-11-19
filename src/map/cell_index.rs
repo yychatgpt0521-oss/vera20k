@@ -8,6 +8,8 @@
 //! ## Dependency rules
 //! - Part of map/; depends on nothing above std.
 
+use std::ops::RangeInclusive;
+
 /// Retained CellClass allocation identity after a fixed-stride lookup. A real
 /// index addresses the loaded terrain storage; Dummy always names the same
 /// process object even when a later failed lookup changes its coordinate.
@@ -131,9 +133,63 @@ pub(crate) fn square_ring_cells(center: (i32, i32), r: i32) -> impl Iterator<Ite
     rows.chain(columns)
 }
 
+/// The cells of [`square_ring_cells`] inside the box `xs` × `ys`, in the same
+/// order. VERA-only: it steps over only the stretches of the ring that cross
+/// the box, so a ring far wider than the map costs the map's cells.
+pub(crate) fn square_ring_cells_within(
+    center: (i32, i32),
+    r: i32,
+    xs: &RangeInclusive<i32>,
+    ys: &RangeInclusive<i32>,
+) -> impl Iterator<Item = (i32, i32)> + use<> {
+    let (x, y) = center;
+    let (north, south, west, east) = (y - r, y + r, x - r, x + r);
+    let [north_in, south_in] = [north, south].map(|row| ys.contains(&row));
+    let [west_in, east_in] = [west, east].map(|column| xs.contains(&column));
+    // The steps whose cell can fall in the box; none when neither side can.
+    let steps = |within: &RangeInclusive<i32>, from: i32, low: i32, high: i32, any: bool| {
+        let low = low.max(within.start().saturating_sub(from));
+        let high = high.min(within.end().saturating_sub(from));
+        if any { low..=high } else { 1..=0 }
+    };
+    let rows = steps(xs, x, -r, r, north_in || south_in).flat_map(move |d| {
+        let (north, south) = ((x + d, north), (x + d, south));
+        [north_in.then_some(north), south_in.then_some(south)]
+            .into_iter()
+            .flatten()
+    });
+    let columns = steps(ys, y, 1 - r, r - 1, west_in || east_in).flat_map(move |e| {
+        let (west, east) = ((west, y + e), (east, y + e));
+        [west_in.then_some(west), east_in.then_some(east)]
+            .into_iter()
+            .flatten()
+    });
+    rows.chain(columns)
+}
+
 #[cfg(all(test, tests_map))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ring_within_a_box_keeps_the_rings_order() {
+        let (xs, ys) = (3..=9, 2..=12);
+        let filtered = |center, r| -> Vec<_> {
+            square_ring_cells(center, r)
+                .filter(|(x, y)| xs.contains(x) && ys.contains(y))
+                .collect()
+        };
+        let within =
+            |center, r| -> Vec<_> { square_ring_cells_within(center, r, &xs, &ys).collect() };
+        // Both apex rows cut at both ends; rows cut at one end and one side
+        // column; the centre twice at r 0; a ring wholly outside.
+        for (center, r) in [((6, 7), 5), ((8, 7), 4), ((4, 6), 0), ((40, 40), 3)] {
+            assert_eq!(within(center, r), filtered(center, r), "{center:?} r {r}");
+        }
+        assert_eq!(within((6, 7), 5).len(), 14);
+        assert_eq!(within((4, 6), 0), [(4, 6), (4, 6)]);
+        assert!(within((40, 40), 3).is_empty());
+    }
 
     #[test]
     fn large_map_addressing_is_map_owned_and_preserves_retail_aliases() {
