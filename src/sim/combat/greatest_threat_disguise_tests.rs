@@ -226,16 +226,16 @@ fn a_side_by_side_hunt_walk_rolls_like_the_one_by_one_walk() {
         sim.update_unit_disguise(mirage, rules).unwrap();
         blink(&mut sim, mirage, 15);
         sim.scenario_rng = SimRng::answering(0, 99, 0);
-        SERIAL_FLAT_SCORES.set(serial);
-        let walks = FLAT_WALKS_SIDE_BY_SIDE.get();
+        ONE_BY_ONE_SCORES.set(serial);
+        let walks = WALKS_SIDE_BY_SIDE.get();
         let pick = sim
             .greatest_threat_represented(rules, None, rhino, ScanMission::Hunt, None)
             .and_then(crate::sim::combat::TargetKind::object_id);
-        SERIAL_FLAT_SCORES.set(false);
+        ONE_BY_ONE_SCORES.set(false);
         (
             pick,
             sim.scenario_rng.logical_state(),
-            FLAT_WALKS_SIDE_BY_SIDE.get() != walks,
+            WALKS_SIDE_BY_SIDE.get() != walks,
         )
     };
     let one_by_one = run(true);

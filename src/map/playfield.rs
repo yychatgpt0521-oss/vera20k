@@ -164,6 +164,15 @@ pub const fn size_diamond_contains(width: i32, height: i32, cell: (i16, i16)) ->
         && sum <= width.wrapping_add(height.wrapping_mul(2))
 }
 
+/// The coordinate range, the same on both axes, holding every cell
+/// [`size_diamond_contains`] admits: `W < x+y`, `x-y < W`, `y-x < W` and
+/// `x+y <= W+2H` give `1 <= x, y <= W+H-1`. `None` for a `Size=` beyond
+/// 0x4000 cells, where the test's wrapping arithmetic could admit others.
+pub fn size_diamond_bounds(width: i32, height: i32) -> Option<std::ops::RangeInclusive<i32>> {
+    const SANE: std::ops::RangeInclusive<i32> = 0..=0x4000;
+    (SANE.contains(&width) && SANE.contains(&height)).then(|| 1..=width + height - 1)
+}
+
 /// `MapClass @ 0x00565660`, the inverse of [`local_to_packed_cell`]: a
 /// cell's LocalSize-relative coordinate. With `w` the `Size=` width
 /// (`+0xF4`), X is `(x - y + (w & 1)) >> 1` (arithmetic shift) plus `w / 2`

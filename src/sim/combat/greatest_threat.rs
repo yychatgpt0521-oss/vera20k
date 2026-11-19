@@ -96,7 +96,7 @@ use super::combat_weapon::{
 };
 use super::threat_mask::{self, InfantryScanner};
 use super::threat_range::{ScanRange, scan_range};
-use crate::map::cell_index::{NativeCellIdentity, square_ring_cells};
+use crate::map::cell_index::{NativeCellIdentity, square_ring_cells, square_ring_cells_within};
 use crate::map::entities::EntityCategory;
 use crate::map::resolved_terrain::{NativeCellQuery, ResolvedTerrainGrid};
 use crate::rules::locomotor_type::SpeedType;
@@ -641,7 +641,7 @@ fn scan_radius_cells(
 }
 
 /// Everything one scan needs that does not change between candidates.
-/// Candidates scored side by side ([`flat_scores`]) each take a clone, so the
+/// Candidates scored side by side ([`side_by_side_scores`]) each take a clone, so the
 /// answer memos below are each worker's own.
 #[derive(Clone)]
 struct ScanContext<'a> {
@@ -727,13 +727,25 @@ struct ScanContext<'a> {
     /// disguise detection draws.
     scenario_rng: std::cell::RefCell<Option<SimRng>>,
     /// VERA-only: the draws so far, so side-by-side scoring can tell which
-    /// candidate drew ([`flat_scores`]).
+    /// candidate drew ([`side_by_side_scores`]).
     scenario_draws: std::cell::Cell<u32>,
     /// VERA-only: [`ThreatScanOutcome`]'s `met_idle_disguise`.
     met_idle_disguise: std::cell::Cell<bool>,
 }
 
 impl ScanContext<'_> {
+    /// Whether [`wall_threat_score`] can score a wall for the scanner: only
+    /// for a computer house (`0x006F8C18..0x006F8C25`) whose difficulty row
+    /// has `DestroyWalls=` (`0x006F8C2B..0x006F8C4C`).
+    fn scores_walls(&self) -> bool {
+        self.standing
+            .house
+            .filter(|_| !self.standing.human)
+            .is_some_and(|house| {
+                self.rules.general.difficulty_rows[house.difficulty().table_index()].destroy_walls
+            })
+    }
+
     /// [`disguise_detection_roll`] on the Scenario stream (Scenario+0x218)
     /// for the scanner's house.
     fn computer_detects_disguise(&self) -> bool {
@@ -1571,26 +1583,75 @@ pub(crate) fn greatest_threat(
         return result(best, collected, &ctx);
     }
 
+    let diamond = fire_world.and_then(|world| world.map_size_diamond());
+    // VERA-only: each ring visits only its cells inside the Size diamond's
+    // box. Every other cell fails the diamond test below before any lookup,
+    // so the walk looks at the same cells in the same order: a ring wider
+    // than the map (MO's Chimera Core scans 385 cells out) no longer steps
+    // through the thousands of cells off it. Not where a ring coordinate
+    // wraps in the i16 cast, which can bring it back onto the map.
+    let unclipped = i32::MIN..=i32::MAX;
+    let (xs, ys) = diamond
+        .and_then(|(width, height)| crate::map::playfield::size_diamond_bounds(width, height))
+        .filter(|_| {
+            let reach = radius - 1;
+            [cx, cy].into_iter().all(|centre| {
+                centre - reach >= i32::from(i16::MIN) && centre + reach <= i32::from(i16::MAX)
+            })
+        })
+        .map_or((unclipped.clone(), unclipped), |bounds| {
+            (bounds.clone(), bounds)
+        });
+    // Native ring coordinates cross the packed CellStruct seam before
+    // Map568300 tests Size's diamond. Loaded-world callers own Size; mapless
+    // walk fixtures retain their rectangular coordinate domain.
+    let ring_cells = |ring: i32| {
+        square_ring_cells_within((cx, cy), ring, &xs, &ys)
+            .map(|(x, y)| (x as i16, y as i16))
+            .filter(move |&coord| {
+                diamond.is_none_or(|(width, height)| {
+                    crate::map::playfield::size_diamond_contains(width, height, coord)
+                })
+            })
+    };
+
+    // VERA-only: a walk wider than [`RING_SIDE_BY_SIDE_RADIUS`] scores its
+    // cells side by side ([`side_by_side_scores`]), a stretch of rings at a
+    // time, and keeps the picks in walk order: the pick of the one-by-one
+    // walk. Without a wall to score ([`ScanContext::scores_walls`]) the walk
+    // returns before its last ring only at the end of an early-return ring,
+    // so each stretch ends at one and no cell past the return is scored. A
+    // DistributedFire scanner's collection stays one by one.
+    if radius > RING_SIDE_BY_SIDE_RADIUS && collected.is_none() && !ctx.scores_walls() {
+        let mut first = 0;
+        for last in [radius / 4, radius / 2, radius - 1] {
+            if last < first {
+                continue;
+            }
+            let cells: Vec<(i16, i16)> = (first..=last).flat_map(&ring_cells).collect();
+            let picks = side_by_side_scores(&ctx, &cells, |ctx, &coord| {
+                ring_cell_pick(ctx, walk, coord, scanner_zone)
+            });
+            for (candidate_id, score) in picks.into_iter().flatten() {
+                if score > best_score {
+                    best_score = score;
+                    best = Some(candidate_id);
+                }
+            }
+            if best.is_some() && is_early_return_ring(last, radius) {
+                break;
+            }
+            first = last + 1;
+        }
+        return result(best, collected, &ctx);
+    }
+
     // `[ESP+0x30]`/`[ESP+0x34]` (`0x006F93A1..0x006F93B3`): the best wall
     // cell's score starts at 0, so a wall must score above it.
     let mut wall: Option<((i16, i16), i32)> = None;
     for ring in 0..radius {
-        for (x, y) in square_ring_cells((cx, cy), ring) {
-            // Native ring coordinates cross the packed CellStruct seam before
-            // Map568300 tests Size's diamond. Loaded-world callers own Size;
-            // mapless walk fixtures retain their rectangular coordinate domain.
-            let coord = (x as i16, y as i16);
-            if let Some((width, height)) = fire_world.and_then(|world| world.map_size_diamond())
-                && !crate::map::playfield::size_diamond_contains(width, height, coord)
-            {
-                continue;
-            }
-            if let Some(candidate_id) = scan_cell_for_target(&ctx, coord, scanner_zone)
-                && let Some(candidate) = entities.get(candidate_id)
-                // `0x006F9459..0x006F9497`, after `Scan_Cell_For_Target`.
-                && let Some(score) = evaluate_candidate(&ctx, walk, candidate)
-                    .filter(|_| ctx.house_gates_admit(candidate))
-            {
+        for coord in ring_cells(ring) {
+            if let Some((candidate_id, score)) = ring_cell_pick(&ctx, walk, coord, scanner_zone) {
                 //6F94A7/6F9654/6F9839/6F99ED: ring append points. Flat
                 //6F9B6E..6F9DA1 deliberately has no corresponding collection.
                 if let Some(entries) = &mut collected {
@@ -1628,6 +1689,26 @@ pub(crate) fn greatest_threat(
     result(best, collected, &ctx)
 }
 
+/// The ring walk's radius beyond which it scores side by side; see
+/// [`greatest_threat`]. Ordinary weapon ranges stay under it.
+const RING_SIDE_BY_SIDE_RADIUS: i32 = 32;
+
+/// What a ring cell offers the walk: the object [`scan_cell_for_target`]
+/// offers, when [`evaluate_candidate`] scores it and the house gates admit
+/// it (`0x006F9459..0x006F9497`, after `Scan_Cell_For_Target`).
+fn ring_cell_pick(
+    ctx: &ScanContext<'_>,
+    walk: WalkArgs,
+    coord: (i16, i16),
+    zone: Option<u32>,
+) -> Option<(u64, i32)> {
+    let candidate_id = scan_cell_for_target(ctx, coord, zone)?;
+    let candidate = ctx.entities.get(candidate_id)?;
+    let score =
+        evaluate_candidate(ctx, walk, candidate).filter(|_| ctx.house_gates_admit(candidate))?;
+    Some((candidate_id, score))
+}
+
 /// `TechnoClass::Cell_Threat_Fallback @ 0x006F8C10`: what a ring cell's wall
 /// scores for the scanner, 0 when it offers none. Each step is native:
 /// - a human house never shoots walls (`0x006F8C18..0x006F8C25`), and a
@@ -1647,10 +1728,7 @@ pub(crate) fn greatest_threat(
 ///
 /// [`can_fire_at_target`]: crate::sim::combat::can_fire_at_target
 fn wall_threat_score(ctx: &ScanContext<'_>, cell: (i16, i16)) -> i32 {
-    let Some(house) = ctx.standing.house.filter(|_| !ctx.standing.human) else {
-        return 0;
-    };
-    if !ctx.rules.general.difficulty_rows[house.difficulty().table_index()].destroy_walls {
+    if !ctx.scores_walls() {
         return 0;
     }
     let (Some(grid), Some(registry), Some(world), Some(terrain)) = (
@@ -1927,52 +2005,64 @@ fn global_list_scan(ctx: &ScanContext<'_>, flags: u32, zone: Option<u32>) -> Opt
     best
 }
 
-/// The global list at which [`flat_scores`] scores side by side.
+/// The list at which [`side_by_side_scores`] scores side by side.
 const SIDE_BY_SIDE_CANDIDATES: usize = 256;
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    /// Tests set this to score every flat walk one by one, the reference
-    /// side-by-side scoring must match; [`FLAT_WALKS_SIDE_BY_SIDE`] counts
-    /// the walks scored side by side.
-    static SERIAL_FLAT_SCORES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static FLAT_WALKS_SIDE_BY_SIDE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Tests set this to score every walk one by one, the reference
+    /// side-by-side scoring must match; [`WALKS_SIDE_BY_SIDE`] counts the
+    /// lists scored side by side.
+    static ONE_BY_ONE_SCORES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static WALKS_SIDE_BY_SIDE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// The flat walk's score of each object in `candidates`, in order
-/// ([`evaluate_candidate`]).
-///
-/// VERA-only: a mask-0 scan (a Hunt) scores every object on the map that
-/// [`flat_walk_admits`] passes, so a long list is scored side by side on the worker pool, results in list
-/// order: the walk keeps exactly what the one-by-one walk keeps. A score
-/// reads nothing the walk changes except the shared Dummy, which a
-/// candidate's cell lookups can stamp and a later candidate's read, and the
-/// Scenario stream a computer's disguise detection draws from. Each
-/// candidate is therefore scored on a private copy of both. Whether a
-/// candidate draws does not depend on the stream, but a side-by-side roll
-/// came from wherever its worker's copy had got to, so the candidates that
-/// drew are scored again, in list order on the shared stream, and only
-/// their second scores count. When any candidate stamped the Dummy (the ones
-/// that drew, in their second scoring) the list is scored again one by one
-/// on the shared Dummy and the stream as the walk found them, as natively.
+/// ([`evaluate_candidate`]). A mask-0 scan (a Hunt) scores every object on
+/// the map that [`flat_walk_admits`] passes, so a long list is scored side by
+/// side.
 fn flat_scores(
     ctx: &ScanContext<'_>,
     walk: WalkArgs,
     candidates: &[&GameEntity],
 ) -> Vec<Option<i32>> {
+    side_by_side_scores(ctx, candidates, |ctx, candidate| {
+        evaluate_candidate(ctx, walk, candidate)
+    })
+}
+
+/// `score` of each of `items`, in order, as the walk would score them one
+/// by one.
+///
+/// VERA-only: a list of [`SIDE_BY_SIDE_CANDIDATES`] or more is scored side by
+/// side on the worker pool, results in list order: the walk keeps exactly
+/// what the one-by-one walk keeps. A score reads nothing the walk changes
+/// except the shared Dummy, which an item's cell lookups can stamp and a
+/// later item's read, and the Scenario stream a computer's disguise
+/// detection draws from. Each item is therefore scored on a private copy of
+/// both. Whether an item draws does not depend on the stream, but a
+/// side-by-side roll came from wherever its worker's copy had got to, so the
+/// items that drew are scored again, in list order on the shared stream, and
+/// only their second scores count. When any item stamped the Dummy (the ones
+/// that drew, in their second scoring) the list is scored again one by one
+/// on the shared Dummy and the stream as the walk found them, as natively.
+fn side_by_side_scores<T: Sync, R: Send>(
+    ctx: &ScanContext<'_>,
+    items: &[T],
+    score: impl Fn(&ScanContext<'_>, &T) -> R + Sync,
+) -> Vec<R> {
     #[cfg(any(test, feature = "test-support"))]
-    let serial = SERIAL_FLAT_SCORES.get();
+    let serial = ONE_BY_ONE_SCORES.get();
     #[cfg(not(any(test, feature = "test-support")))]
     let serial = false;
     if !serial
-        && candidates.len() >= SIDE_BY_SIDE_CANDIDATES
+        && items.len() >= SIDE_BY_SIDE_CANDIDATES
         && let Some(terrain) = ctx.terrain
     {
         let dummy = terrain.shared_cell_dummy();
-        let scored = crate::sim::parallel::map_with(candidates, ctx.clone(), |ctx, candidate| {
+        let scored = crate::sim::parallel::map_with(items, ctx.clone(), |ctx, item| {
             let draws = ctx.scenario_draws.get();
-            let (score, stamped) =
-                dummy.detached_stamps(|| evaluate_candidate(ctx, walk, candidate));
+            let (score, stamped) = dummy.detached_stamps(|| score(ctx, item));
             let drew = ctx.scenario_draws.get() != draws;
             (score, stamped, drew, ctx.met_idle_disguise.replace(false))
         });
@@ -1982,22 +2072,21 @@ fn flat_scores(
             let met_idle_disguise = ctx.met_idle_disguise.get();
             let scores: Option<Vec<_>> = scored
                 .into_iter()
-                .zip(candidates)
-                .map(|((score, _, drew, met), candidate)| {
+                .zip(items)
+                .map(|((scored, _, drew, met), item)| {
                     if met {
                         ctx.met_idle_disguise.set(true);
                     }
                     if !drew {
-                        return Some(score);
+                        return Some(scored);
                     }
-                    let (score, stamped) =
-                        dummy.detached_stamps(|| evaluate_candidate(ctx, walk, candidate));
-                    (!stamped).then_some(score)
+                    let (scored, stamped) = dummy.detached_stamps(|| score(ctx, item));
+                    (!stamped).then_some(scored)
                 })
                 .collect();
             if let Some(scores) = scores {
                 #[cfg(any(test, feature = "test-support"))]
-                FLAT_WALKS_SIDE_BY_SIDE.set(FLAT_WALKS_SIDE_BY_SIDE.get() + 1);
+                WALKS_SIDE_BY_SIDE.set(WALKS_SIDE_BY_SIDE.get() + 1);
                 return scores;
             }
             *ctx.scenario_rng.borrow_mut() = stream;
@@ -2005,10 +2094,7 @@ fn flat_scores(
             ctx.met_idle_disguise.set(met_idle_disguise);
         }
     }
-    candidates
-        .iter()
-        .map(|candidate| evaluate_candidate(ctx, walk, candidate))
-        .collect()
+    items.iter().map(|item| score(ctx, item)).collect()
 }
 
 /// The flat walk's gates before Evaluate_Candidate, which ask only an
@@ -3197,7 +3283,7 @@ mod tests {
             )
             .expect("conscript");
         }
-        let walks = FLAT_WALKS_SIDE_BY_SIDE.get();
+        let walks = WALKS_SIDE_BY_SIDE.get();
         let pick = sim
             .greatest_threat_represented(
                 rules,
@@ -3209,10 +3295,72 @@ mod tests {
             .and_then(crate::sim::combat::TargetKind::object_id);
         assert_eq!(pick, Some(tank));
         assert_eq!(
-            FLAT_WALKS_SIDE_BY_SIDE.get(),
+            WALKS_SIDE_BY_SIDE.get(),
             walks,
             "the walk scored the conscripts"
         );
+    }
+
+    /// A ring walk wider than [`RING_SIDE_BY_SIDE_RADIUS`] scores its cells
+    /// side by side and picks what the one-by-one walk picks: a Rhino whose
+    /// 120mm reaches 40 cells (early returns at rings 10 and 20) with tanks 5
+    /// and 15 cells out, which the walk leaves at ring 10, 15 and 25 out,
+    /// which it leaves at ring 20, and one 25 out, which it walks every ring
+    /// for.
+    #[test]
+    fn a_wide_ring_walk_side_by_side_picks_like_the_one_by_one_walk() {
+        let Some((mut ini, art)) = crate::rules::retail_ini_fixture::retail_rules_and_art() else {
+            return;
+        };
+        ini.merge(&IniFile::from_str("[120mm]\nRange=40\n"));
+        let rules = &RuleSet::from_ini_with_fixed_art_for_test(&ini, &art).expect("retail rules");
+        let run = |serial: bool, tanks: &[u16]| {
+            let mut sim = crate::sim::arena_fixture::rival_arena_with_size(rules, 1, 64);
+            sim.intern_rule_type_ids(rules);
+            sim.resolve_type_handles(rules);
+            let rhino = sim
+                .spawn_object("HTNK", "Russians", 12, 20, 64, rules)
+                .expect("rhino");
+            let tanks: Vec<u64> = tanks
+                .iter()
+                .map(|&x| {
+                    sim.spawn_object("MTNK", "Americans", x, 20, 64, rules)
+                        .expect("tank")
+                })
+                .collect();
+            ONE_BY_ONE_SCORES.set(serial);
+            let walks = WALKS_SIDE_BY_SIDE.get();
+            let pick = sim
+                .greatest_threat_represented(
+                    rules,
+                    None,
+                    rhino,
+                    crate::sim::combat::threat_range::ScanMission::Guard,
+                    None,
+                )
+                .and_then(crate::sim::combat::TargetKind::object_id);
+            ONE_BY_ONE_SCORES.set(false);
+            let side_by_side = WALKS_SIDE_BY_SIDE.get() != walks;
+            (
+                pick.and_then(|pick| tanks.iter().position(|&tank| tank == pick)),
+                side_by_side,
+            )
+        };
+        let scenes = [
+            (&[17, 27][..], Some(0)),
+            (&[27, 37][..], Some(0)),
+            (&[37][..], Some(0)),
+        ];
+        for (tanks, expected) in scenes {
+            let one_by_one = run(true, tanks);
+            let side_by_side = run(false, tanks);
+            assert!(
+                !one_by_one.1 && side_by_side.1,
+                "{tanks:?}: the walks took both paths"
+            );
+            assert_eq!(side_by_side.0, one_by_one.0, "{tanks:?}");
+            assert_eq!(one_by_one.0, expected, "{tanks:?}");
+        }
     }
 
     #[test]

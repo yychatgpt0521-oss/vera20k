@@ -533,7 +533,7 @@ impl SharedCellDummy {
     /// to the current thread: its stamps and reads use a copy of the shared
     /// word taken now, and the shared word stays as it is. Path searches and
     /// target scans running side by side (`movement::path_batch`,
-    /// `techno_ai::scan_batch`, `greatest_threat::flat_scores`) stamp
+    /// `techno_ai::scan_batch`, `greatest_threat::side_by_side_scores`) stamp
     /// through it, so they neither race on the Dummy nor change what later
     /// lookups on the simulation thread see.
     ///
